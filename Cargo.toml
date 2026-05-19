@@ -1,0 +1,18 @@
+[workspace]
+members = ["crates/*"]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/Aid-On/pagina"
+
+[workspace.dependencies]
+pagina-core = { path = "crates/pagina-core" }
+html5ever = "0.39"
+markup5ever = "0.39"
+markup5ever_rcdom = "0.39"
+cssparser = "0.37"
+printpdf = "0.9"
+clap = { version = "4", features = ["derive"] }

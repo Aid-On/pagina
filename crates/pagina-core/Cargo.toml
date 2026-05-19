@@ -1,0 +1,12 @@
+[package]
+name = "pagina-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+html5ever.workspace = true
+markup5ever.workspace = true
+markup5ever_rcdom.workspace = true
+cssparser.workspace = true
+printpdf.workspace = true
