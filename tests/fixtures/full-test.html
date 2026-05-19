@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html>
+<head>
+<style>
+@page {
+  size: A4;
+  margin: 30mm 25mm;
+
+  @top-center {
+    content: string(chapter-title);
+    font-size: 9pt;
+    color: #666;
+  }
+
+  @bottom-center {
+    content: counter(page) " / " counter(pages);
+    font-size: 9pt;
+    color: #666;
+  }
+}
+
+@page :first {
+  @top-center { content: none; }
+}
+
+h1 {
+  font-size: 28pt;
+  text-align: center;
+  margin-top: 30mm;
+  margin-bottom: 15mm;
+  color: #1a1a2e;
+}
+
+h2 {
+  font-size: 18pt;
+  color: #16213e;
+  break-before: page;
+  string-set: chapter-title content();
+  margin-bottom: 5mm;
+  border-bottom: 1pt solid #ccc;
+}
+
+h3 {
+  font-size: 14pt;
+  color: #0f3460;
+  margin-top: 6mm;
+  margin-bottom: 3mm;
+}
+
+p {
+  font-size: 11pt;
+  line-height: 1.6;
+  margin-bottom: 4mm;
+}
+
+.subtitle {
+  font-size: 14pt;
+  text-align: center;
+  color: #555;
+  margin-bottom: 20mm;
+}
+
+.footnote {
+  float: footnote;
+  font-size: 9pt;
+}
+
+.note {
+  font-size: 10pt;
+  color: #444;
+  margin-top: 3mm;
+  margin-bottom: 3mm;
+}
+</style>
+</head>
+<body>
+
+<h1>Pagina User Guide</h1>
+<p class="subtitle">A CSS Paged Media to PDF Engine Written in Rust</p>
+
+<h2>Chapter 1: Introduction</h2>
+
+<p>Pagina is a high-performance HTML and CSS to PDF conversion engine built entirely in Rust. It leverages battle-tested components from the Servo browser engine project for HTML and CSS parsing, combined with a custom paged layout engine that implements the CSS Paged Media specification.</p>
+
+<p>The goal of Pagina is to provide Prince-level CSS Paged Media support as an open-source tool, enabling developers to generate professional-quality PDF documents from HTML and CSS templates.</p>
+
+<p>Key features include page sizing and margins, running headers and footers with page numbers, footnotes<span class="footnote">Footnotes are placed at the bottom of the page where they are referenced, following the CSS Generated Content for Paged Media specification.</span>, page break control, and a growing set of CSS property support.</p>
+
+<h3>Why Pagina?</h3>
+
+<p>Existing open-source tools for HTML-to-PDF conversion each have significant limitations. WeasyPrint lacks footnote support. Paged.js depends on a browser engine. Vivliostyle uses the AGPL license. Pagina aims to fill this gap with a fast, permissively-licensed, standalone tool.</p>
+
+<h3>Architecture</h3>
+
+<p>The conversion pipeline consists of four stages: HTML parsing with html5ever, CSS parsing with cssparser, styled tree construction with cascade resolution, and paged layout with PDF output via printpdf.</p>
+
+<h2>Chapter 2: CSS Paged Media Features</h2>
+
+<p>Pagina implements the core features of the CSS Paged Media Module Level 3 and CSS Generated Content for Paged Media (GCPM) specifications.</p>
+
+<h3>Page Size and Margins</h3>
+
+<p>The page size is set using the size property in an at-page rule. Named sizes like A4, A3, Letter, and Legal are supported, along with explicit dimensions in any CSS length unit. Orientation can be specified with portrait or landscape keywords.</p>
+
+<h3>Margin Boxes</h3>
+
+<p>Up to 16 margin boxes can be placed in the page margins. The most commonly used positions are top-left, top-center, top-right, bottom-left, bottom-center, and bottom-right. Content can include static text, page counters, and running strings.</p>
+
+<h3>Running Headers</h3>
+
+<p>The string-set property captures element content into a named string. This string can then be referenced in margin boxes using the string() function, creating running headers that automatically update as the document flows across pages.</p>
+
+<h3>Footnotes</h3>
+
+<p>Elements with float: footnote are removed from the normal flow and placed at the bottom of the page where they are referenced. A footnote reference marker is inserted at the point of reference, and the footnote text appears with a matching marker at the page bottom<span class="footnote">This is a second footnote demonstrating that multiple footnotes can appear on the same page.</span>.</p>
+
+<h3>Page Breaks</h3>
+
+<p>The break-before and break-after properties control where page breaks occur. Setting break-before: page on a heading ensures each chapter starts on a new page. The break-inside: avoid property prevents breaks within an element.</p>
+
+<h2>Chapter 3: Supported CSS Properties</h2>
+
+<p>Pagina supports a growing set of CSS properties for document formatting.</p>
+
+<h3>Typography</h3>
+
+<ul>
+  <li>font-size: Any CSS length unit (pt, mm, px, em, etc.)</li>
+  <li>font-weight: normal, bold</li>
+  <li>font-style: normal, italic</li>
+  <li>font-family: Helvetica (sans-serif) and Courier (monospace)</li>
+  <li>line-height: Unitless ratio or length</li>
+  <li>text-align: left, center, right, justify</li>
+  <li>color: Named colors, hex codes, rgb()</li>
+</ul>
+
+<h3>Box Model</h3>
+
+<ul>
+  <li>margin: Shorthand and individual sides (top, right, bottom, left)</li>
+  <li>padding: Top and bottom padding</li>
+  <li>border-bottom: Width, style, and color</li>
+</ul>
+
+<h3>Layout</h3>
+
+<ul>
+  <li>display: block, inline, none, list-item</li>
+  <li>break-before / break-after: page, avoid, auto</li>
+  <li>float: footnote (CSS GCPM)</li>
+  <li>string-set: Named string capture (CSS GCPM)</li>
+</ul>
+
+<h2>Chapter 4: Usage</h2>
+
+<h3>Command Line</h3>
+
+<p>The simplest way to use Pagina is through the command-line interface:</p>
+
+<pre>pagina input.html -o output.pdf</pre>
+
+<h3>As a Library</h3>
+
+<p>Pagina can also be used as a Rust library for programmatic PDF generation:</p>
+
+<pre>let pdf_bytes = pagina_core::convert(&amp;html_string);</pre>
+
+<h3>Comparison with Prince</h3>
+
+<table>
+  <thead>
+    <tr><th>Feature</th><th>Prince</th><th>Pagina</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>CSS Paged Media</td><td>Full</td><td>Core features</td></tr>
+    <tr><td>Margin boxes</td><td>All 16</td><td>All 16</td></tr>
+    <tr><td>Footnotes</td><td>Yes</td><td>Yes</td></tr>
+    <tr><td>Running headers</td><td>Yes</td><td>Yes</td></tr>
+    <tr><td>License</td><td>Proprietary ($495+)</td><td>MIT / Apache-2.0</td></tr>
+    <tr><td>Language</td><td>C/C++</td><td>Rust</td></tr>
+  </tbody>
+</table>
+
+<p class="note">Note: Pagina is under active development. Feature parity with Prince is a long-term goal.</p>
+
+</body>
+</html>
