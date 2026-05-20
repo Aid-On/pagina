@@ -1,0 +1,9 @@
+[[fonts]]
+family = "NotoSansJP-Regular"
+url = "https://github.com/notofonts/noto-cjk/raw/main/Sans/OTF/Japanese/NotoSansCJKjp-Regular.otf"
+file = "NotoSansCJKjp-Regular.otf"
+
+[[fonts]]
+family = "NotoSansJP-Bold"
+url = "https://github.com/notofonts/noto-cjk/raw/main/Sans/OTF/Japanese/NotoSansCJKjp-Bold.otf"
+file = "NotoSansCJKjp-Bold.otf"

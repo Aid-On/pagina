@@ -1,20 +1,19 @@
 [document]
-title = "Software Development Outsourcing Agreement"
+title = "Software Development Agreement"
 date = "May 20, 2026"
 
-[parties.Client]
+[parties.Party-A]
 name = "Example Corp."
 address = "1-2-3 Shibuya, Shibuya-ku, Tokyo"
 representative = "CEO Ichiro Sato"
 
-[parties.Contractor]
+[parties.Party-B]
 name = "Taro Yamada"
 address = "4-5-6 Shinjuku, Shinjuku-ku, Tokyo"
 
 [[clauses]]
 title = "Purpose"
-template = "purpose"
-[clauses.params]
+body = "<p>Party-A hereby outsources the following work to Party-B, and Party-B accepts.</p><p>Work: Software development</p>"
 
 [[clauses]]
 title = "Contract Period"

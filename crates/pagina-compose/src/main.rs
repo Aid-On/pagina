@@ -303,6 +303,76 @@ h1 {
 "#
 }
 
+// ─── Font auto-download ──────────────────────────────
+
+#[derive(Deserialize)]
+struct FontsConfig {
+    #[serde(default)]
+    fonts: Vec<FontEntry>,
+}
+
+#[derive(Deserialize)]
+struct FontEntry {
+    #[allow(dead_code)]
+    family: String,
+    url: String,
+    file: String,
+}
+
+fn font_cache_dir() -> PathBuf {
+    let dir = dirs_cache().join("pagina").join("fonts");
+    let _ = fs::create_dir_all(&dir);
+    dir
+}
+
+fn dirs_cache() -> PathBuf {
+    if let Ok(xdg) = std::env::var("XDG_CACHE_HOME") {
+        return PathBuf::from(xdg);
+    }
+    if let Ok(home) = std::env::var("HOME") {
+        return PathBuf::from(home).join(".cache");
+    }
+    PathBuf::from("/tmp")
+}
+
+fn ensure_fonts(templates_dir: &Path) -> Vec<PathBuf> {
+    let fonts_toml = templates_dir.join("fonts.toml");
+    let Ok(text) = fs::read_to_string(&fonts_toml) else {
+        return Vec::new();
+    };
+    let Ok(config) = toml::from_str::<FontsConfig>(&text) else {
+        return Vec::new();
+    };
+
+    let cache = font_cache_dir();
+    let mut paths = Vec::new();
+
+    for entry in &config.fonts {
+        let path = cache.join(&entry.file);
+        if !path.exists() {
+            eprintln!("Downloading font {}...", entry.file);
+            if download_file(&entry.url, &path) {
+                eprintln!("  -> {}", path.display());
+            } else {
+                eprintln!("  -> FAILED");
+                continue;
+            }
+        }
+        paths.push(path);
+    }
+
+    paths
+}
+
+fn download_file(url: &str, dest: &Path) -> bool {
+    let status = std::process::Command::new("curl")
+        .args(["-fsSL", "-o"])
+        .arg(dest)
+        .arg(url)
+        .status();
+    matches!(status, Ok(s) if s.success())
+}
+
 // ─── Main ────────────────────────────────────────────
 
 fn main() {
@@ -320,8 +390,15 @@ fn main() {
 
     let html = assemble_html(&def, &cli.templates);
 
-    let font_paths: Vec<String> = cli.fonts.iter().map(|p| p.display().to_string()).collect();
-    let font_refs: Vec<&str> = font_paths.iter().map(|s| s.as_str()).collect();
+    // Resolve fonts: CLI flags + auto-downloaded from fonts.toml
+    let auto_fonts = ensure_fonts(&cli.templates);
+    let mut all_font_paths: Vec<String> = auto_fonts.iter()
+        .map(|p| p.display().to_string())
+        .collect();
+    for p in &cli.fonts {
+        all_font_paths.push(p.display().to_string());
+    }
+    let font_refs: Vec<&str> = all_font_paths.iter().map(|s| s.as_str()).collect();
 
     let pdf_bytes = pagina_core::convert_with_fonts(&html, &font_refs);
 
