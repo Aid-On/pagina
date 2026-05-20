@@ -1,4 +1,5 @@
 <!-- description: PDF 内部/外部リンク（<a href> → PDF Link Annotation） -->
+<!-- done: 2026-05-20 -->
 # PDF Links
 
 HTML の `<a href>` をクリック可能な PDF リンクに変換。

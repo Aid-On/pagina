@@ -1,4 +1,5 @@
 <!-- description: 子孫・子・隣接・属性セレクタ、疑似クラス、::before/::after -->
+<!-- done: 2026-05-20 -->
 # Descendant & Advanced Selectors
 
 現在はタグ/クラス/ID の単純セレクタのみ。実用的な CSS には子孫セレクタが必須。
