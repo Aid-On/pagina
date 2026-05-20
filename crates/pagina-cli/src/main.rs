@@ -16,6 +16,18 @@ struct Cli {
     /// External font files (TTF/OTF) to load
     #[arg(long = "font")]
     fonts: Vec<PathBuf>,
+
+    /// Generate PDF/A-1b conformant output
+    #[arg(long)]
+    pdfa: bool,
+
+    /// Document title (for PDF/A metadata)
+    #[arg(long, default_value = "")]
+    title: String,
+
+    /// Document author (for PDF/A metadata)
+    #[arg(long, default_value = "")]
+    author: String,
 }
 
 fn main() {
@@ -29,7 +41,22 @@ fn main() {
     let font_paths: Vec<String> = cli.fonts.iter().map(|p| p.display().to_string()).collect();
     let font_refs: Vec<&str> = font_paths.iter().map(|s| s.as_str()).collect();
 
-    let pdf_bytes = pagina_core::convert_with_fonts(&html, &font_refs);
+    let pdfa_opts = if cli.pdfa {
+        Some(pagina_core::pdfa::PdfAOptions {
+            title: cli.title.clone(),
+            author: cli.author.clone(),
+            ..Default::default()
+        })
+    } else {
+        None
+    };
+
+    let opts = pagina_core::ConvertOptions {
+        font_paths: &font_refs,
+        pdfa: pdfa_opts,
+    };
+
+    let pdf_bytes = pagina_core::convert_with_options(&html, &opts);
 
     let output = cli.output.unwrap_or_else(|| cli.input.with_extension("pdf"));
     fs::write(&output, &pdf_bytes).unwrap_or_else(|e| {

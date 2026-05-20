@@ -723,7 +723,15 @@ fn lay_out_image(node: &StyledNode, state: &mut LayoutState) {
         None => return,
     };
 
-    // Try to load the image
+    // SVG support: rasterize via resvg
+    if src.ends_with(".svg") {
+        if let Some(loaded) = crate::svg::render_svg_file(src, 300.0) {
+            embed_loaded_image(loaded, node, state);
+        }
+        return;
+    }
+
+    // Raster image (PNG, JPEG)
     let img = match image::open(src) {
         Ok(img) => img,
         Err(_) => return,
@@ -773,6 +781,37 @@ fn lay_out_image(node: &StyledNode, state: &mut LayoutState) {
         kind: ItemKind::Image { id: image_id, width_mm: display_w, height_mm: display_h },
     });
 
+    state.current_y += display_h + node.style.margin_bottom_mm;
+}
+
+fn embed_loaded_image(loaded: LoadedImage, node: &StyledNode, state: &mut LayoutState) {
+    let dpi = 300.0;
+    let natural_w = loaded.width as f64 / dpi * 25.4;
+    let natural_h = loaded.height as f64 / dpi * 25.4;
+    let scale = if natural_w > state.content_width_mm {
+        state.content_width_mm / natural_w
+    } else {
+        1.0
+    };
+    let display_w = natural_w * scale;
+    let display_h = natural_h * scale;
+
+    state.current_y += node.style.margin_top_mm;
+    if state.current_y + display_h > state.available_height()
+        && !state.pages.last().unwrap().items.is_empty()
+    {
+        state.new_page();
+    }
+
+    let image_id = state.images.len();
+    state.images.push(loaded);
+    state.push_item(LayoutItem {
+        x_mm: 0.0, y_mm: state.current_y,
+        font_size_pt: 0.0, font_weight: FontWeight::Normal,
+        font_style: FontStyle::Normal, font_family: String::new(),
+        color: Color::BLACK, text: String::new(),
+        kind: ItemKind::Image { id: image_id, width_mm: display_w, height_mm: display_h },
+    });
     state.current_y += display_h + node.style.margin_bottom_mm;
 }
 
