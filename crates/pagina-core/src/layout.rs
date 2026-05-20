@@ -520,6 +520,9 @@ fn lay_out_node(node: &StyledNode, state: &mut LayoutState, is_first_block: bool
         "img" => {
             lay_out_image(node, state);
         }
+        "math" => {
+            lay_out_math(node, state);
+        }
         "ul" | "ol" => {
             state.current_y += node.style.margin_top_mm;
             let mut counter = 0;
@@ -903,6 +906,26 @@ fn collect_table_row(tr: &StyledNode) -> (Vec<String>, bool) {
         }
     }
     (cells, is_header)
+}
+
+fn lay_out_math(node: &StyledNode, state: &mut LayoutState) {
+    let items = crate::mathml::render_math(node, node.style.font_size_pt, state.fm);
+    let lh = node.style.font_size_pt * 1.6 * 25.4 / 72.0;
+
+    state.current_y += node.style.margin_top_mm;
+
+    if state.current_y + lh > state.available_height()
+        && !state.pages.last().unwrap().items.is_empty()
+    {
+        state.new_page();
+    }
+
+    for mut item in items {
+        item.y_mm += state.current_y;
+        state.push_item(item);
+    }
+
+    state.current_y += lh + node.style.margin_bottom_mm;
 }
 
 fn collect_text_content(node: &StyledNode) -> String {

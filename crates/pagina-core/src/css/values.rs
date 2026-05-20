@@ -39,22 +39,41 @@ impl Length {
     }
 }
 
-/// CSS color.
+/// CMYK color (values 0.0 - 1.0).
+#[derive(Debug, Clone, Copy)]
+pub struct CmykColor {
+    pub c: f32,
+    pub m: f32,
+    pub y: f32,
+    pub k: f32,
+}
+
+/// CSS color (RGB with optional CMYK for print output).
 #[derive(Debug, Clone, Copy)]
 pub struct Color {
     pub r: u8,
     pub g: u8,
     pub b: u8,
     pub a: f64,
+    /// When set, PDF output uses CMYK instead of RGB.
+    pub cmyk: Option<CmykColor>,
 }
 
 impl Color {
-    pub const BLACK: Color = Color { r: 0, g: 0, b: 0, a: 1.0 };
-    pub const WHITE: Color = Color { r: 255, g: 255, b: 255, a: 1.0 };
-    pub const TRANSPARENT: Color = Color { r: 0, g: 0, b: 0, a: 0.0 };
+    pub const BLACK: Color = Color { r: 0, g: 0, b: 0, a: 1.0, cmyk: None };
+    pub const WHITE: Color = Color { r: 255, g: 255, b: 255, a: 1.0, cmyk: None };
+    pub const TRANSPARENT: Color = Color { r: 0, g: 0, b: 0, a: 0.0, cmyk: None };
 
     pub fn rgb(r: u8, g: u8, b: u8) -> Self {
-        Self { r, g, b, a: 1.0 }
+        Self { r, g, b, a: 1.0, cmyk: None }
+    }
+
+    pub fn cmyk(c: f32, m: f32, y: f32, k: f32) -> Self {
+        // Also store an approximate RGB fallback
+        let r = (255.0 * (1.0 - c) * (1.0 - k)) as u8;
+        let g = (255.0 * (1.0 - m) * (1.0 - k)) as u8;
+        let b = (255.0 * (1.0 - y) * (1.0 - k)) as u8;
+        Self { r, g, b, a: 1.0, cmyk: Some(CmykColor { c, m, y, k }) }
     }
 
     pub fn from_name(name: &str) -> Option<Self> {

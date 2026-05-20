@@ -593,10 +593,34 @@ pub fn parse_color_value(s: &str) -> Option<Color> {
             let g = parts[1].trim().parse().ok()?;
             let b = parts[2].trim().parse().ok()?;
             let a = parts.get(3).and_then(|s| s.trim().parse().ok()).unwrap_or(1.0);
-            return Some(Color { r, g, b, a });
+            return Some(Color { r, g, b, a, cmyk: None });
+        }
+    }
+    // cmyk(c, m, y, k) or device-cmyk(c, m, y, k)
+    if s.starts_with("cmyk") || s.starts_with("device-cmyk") {
+        let inner = s.split_once('(')?.1.strip_suffix(')')?.trim();
+        let parts: Vec<&str> = inner.split([',', ' ']).filter(|p| !p.is_empty()).collect();
+        if parts.len() >= 4 {
+            let c: f32 = parse_cmyk_component(parts[0])?;
+            let m: f32 = parse_cmyk_component(parts[1])?;
+            let y: f32 = parse_cmyk_component(parts[2])?;
+            let k: f32 = parse_cmyk_component(parts[3])?;
+            return Some(Color::cmyk(c, m, y, k));
         }
     }
     Color::from_name(s)
+}
+
+fn parse_cmyk_component(s: &str) -> Option<f32> {
+    let s = s.trim();
+    if let Some(pct) = s.strip_suffix('%') {
+        let v: f32 = pct.trim().parse().ok()?;
+        Some(v / 100.0)
+    } else {
+        let v: f32 = s.parse().ok()?;
+        // Normalize: if > 1.0, treat as percentage
+        Some(if v > 1.0 { v / 100.0 } else { v })
+    }
 }
 
 pub fn parse_text_align_value(s: &str) -> Option<TextAlign> {

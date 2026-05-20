@@ -28,6 +28,10 @@ struct Cli {
     /// Document author (for PDF/A metadata)
     #[arg(long, default_value = "")]
     author: String,
+
+    /// Generate Tagged PDF (PDF/UA accessibility)
+    #[arg(long)]
+    tagged: bool,
 }
 
 fn main() {
@@ -54,6 +58,7 @@ fn main() {
     let opts = pagina_core::ConvertOptions {
         font_paths: &font_refs,
         pdfa: pdfa_opts,
+        tagged: cli.tagged,
     };
 
     let pdf_bytes = pagina_core::convert_with_options(&html, &opts);

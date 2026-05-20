@@ -1,6 +1,6 @@
 use printpdf::{
     Line, LinePoint, Mm, Op, PdfDocument, PdfPage, PdfSaveOptions,
-    Point, Pt, RawImage, RawImageData, RawImageFormat, Rgb, TextItem, XObjectId, XObjectTransform,
+    Cmyk, Point, Pt, RawImage, RawImageData, RawImageFormat, Rgb, TextItem, XObjectId, XObjectTransform,
 };
 
 use crate::css::values::{Color, FontStyle, FontWeight, MarginBoxPosition, TextAlign};
@@ -53,12 +53,22 @@ pub fn render(
 }
 
 fn color_to_printpdf(c: &Color) -> printpdf::Color {
-    printpdf::Color::Rgb(Rgb {
-        r: c.r as f32 / 255.0,
-        g: c.g as f32 / 255.0,
-        b: c.b as f32 / 255.0,
-        icc_profile: None,
-    })
+    if let Some(cmyk) = &c.cmyk {
+        printpdf::Color::Cmyk(Cmyk {
+            c: cmyk.c,
+            m: cmyk.m,
+            y: cmyk.y,
+            k: cmyk.k,
+            icc_profile: None,
+        })
+    } else {
+        printpdf::Color::Rgb(Rgb {
+            r: c.r as f32 / 255.0,
+            g: c.g as f32 / 255.0,
+            b: c.b as f32 / 255.0,
+            icc_profile: None,
+        })
+    }
 }
 
 fn build_page_ops(

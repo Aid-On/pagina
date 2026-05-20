@@ -235,7 +235,7 @@ fn build_styled_node(
 
             // Inherit from parent
             style.font_size_pt = inherit_font_size(&style, parent_style);
-            style.color = if matches!(style.color, Color { r: 0, g: 0, b: 0, a: 1.0 }) {
+            style.color = if matches!(style.color, Color { r: 0, g: 0, b: 0, a: 1.0, .. }) {
                 parent_style.color
             } else {
                 style.color

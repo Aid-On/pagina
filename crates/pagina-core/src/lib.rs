@@ -3,8 +3,10 @@ pub mod dom;
 pub mod font;
 pub mod js;
 pub mod layout;
+pub mod mathml;
 pub mod pdf;
 pub mod pdfa;
+pub mod pdfua;
 pub mod style;
 pub mod svg;
 
@@ -16,6 +18,7 @@ use font::FontManager;
 pub struct ConvertOptions<'a> {
     pub font_paths: &'a [&'a str],
     pub pdfa: Option<pdfa::PdfAOptions>,
+    pub tagged: bool,
 }
 
 /// Convert HTML (with embedded CSS) to PDF bytes.
@@ -46,11 +49,8 @@ pub fn convert_with_options(html: &str, opts: &ConvertOptions) -> Vec<u8> {
     }
 
     let dom = dom::parse_html(html);
-
-    // Execute JavaScript (before layout, like Prince)
     let js_writes = js::run_scripts(&dom);
 
-    // If JS produced output, re-parse with injected content
     let effective_dom = if js_writes.is_empty() {
         dom
     } else {
@@ -76,13 +76,20 @@ pub fn convert_with_options(html: &str, opts: &ConvertOptions) -> Vec<u8> {
         .expect("failed to build styled tree");
 
     let (pages, images) = layout::lay_out(&page_styles, &styled_tree, &fm);
-    let pdf_bytes = pdf::render(&page_styles.base, &pages, &images, &mut fm);
+    let mut pdf_bytes = pdf::render(&page_styles.base, &pages, &images, &mut fm);
 
+    // PDF/A post-processing
     if let Some(pdfa_opts) = &opts.pdfa {
-        pdfa::make_pdfa(&pdf_bytes, pdfa_opts)
-    } else {
-        pdf_bytes
+        pdf_bytes = pdfa::make_pdfa(&pdf_bytes, pdfa_opts);
     }
+
+    // PDF/UA tagged structure
+    if opts.tagged {
+        let structure = pdfua::build_structure(&styled_tree);
+        pdf_bytes = pdfua::make_tagged_pdf(&pdf_bytes, &structure);
+    }
+
+    pdf_bytes
 }
 
 /// Convenience: convert with font paths only.
