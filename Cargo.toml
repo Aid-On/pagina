@@ -6,7 +6,7 @@ resolver = "2"
 version = "0.1.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/Aid-On/pagina"
+repository = "https://github.com/O6lvl4/pagina"
 
 [workspace.dependencies]
 pagina-core = { path = "crates/pagina-core" }
