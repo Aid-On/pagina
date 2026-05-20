@@ -229,54 +229,32 @@ fn build_signature(def: &DocumentDef, sig: &SignatureDef) -> String {
         html.push_str(&format!("<p class=\"sig-date\">{}</p>\n", def.document.date));
     }
 
-    // Collect parties in stable order (sorted by key)
     let mut parties: Vec<(&String, &Party)> = def.parties.iter().collect();
     parties.sort_by(|(a, _), (b, _)| a.cmp(b));
 
-    // Full-width spaces for alignment (consistent width with CJK font)
-    let indent = "\u{3000}\u{3000}"; // 2 full-width spaces
-
     for (role, party) in &parties {
-        html.push_str("<div class=\"sig-party\">\n");
-
-        // Address line: role + 住所 + value
+        // Each field is a separate <p> with no wrapper div
         if !party.address.is_empty() {
-            html.push_str(&format!(
-                "<p>{}\u{3000}住所\u{3000}{}</p>\n",
-                role, party.address
-            ));
+            html.push_str(&format!("<p><b>{}</b></p>\n", role));
+            html.push_str(&format!("<p>住所: {}</p>\n", party.address));
         } else {
-            html.push_str(&format!("<p>{}</p>\n", role));
+            html.push_str(&format!("<p><b>{}</b></p>\n", role));
         }
 
-        // Name line with seal
-        if sig.style == "seal" {
-            html.push_str(&format!(
-                "<p>{indent}氏名\u{3000}{}</p>\n",
-                party.name
-            ));
-            html.push_str(&format!(
-                "<p class=\"sig-seal\">{indent}\u{3000}\u{3000}\u{3000}\u{3000}\u{3000}\u{3000}\u{3000}\u{3000}\u{3000}\u{3000}\u{3000}\u{3000}\u{3000}\u{3000}\u{3000}\u{3000}印</p>\n"
-            ));
-        } else {
-            html.push_str(&format!(
-                "<p>{indent}氏名\u{3000}{}</p>\n",
-                party.name
-            ));
-            html.push_str(&format!(
-                "<p>{indent}\u{3000}\u{3000}\u{3000}署名 ________________________</p>\n"
-            ));
-        }
+        html.push_str(&format!("<p>氏名: {}</p>\n", party.name));
 
-        // Representative
         if !party.representative.is_empty() {
-            html.push_str(&format!(
-                "<p>{indent}\u{3000}\u{3000}\u{3000}{}</p>\n",
-                party.representative
-            ));
+            html.push_str(&format!("<p>代表者: {}</p>\n", party.representative));
         }
 
-        html.push_str("</div>\n");
+        if sig.style == "seal" {
+            html.push_str("<p style=\"text-align: right; color: #c00\">印</p>\n");
+        } else {
+            html.push_str("<p>署名: ________________________</p>\n");
+        }
+
+        // Spacer between parties
+        html.push_str("<p> </p>\n<p> </p>\n");
     }
 
     html.push_str("</div>\n");
@@ -322,10 +300,8 @@ h1 {
 .clause ol, .clause ul { margin-bottom: 2mm; }
 
 .sig-area { break-before: page; }
-.sig-closing { margin-bottom: 12mm; }
-.sig-date { text-align: right; margin-bottom: 18mm; }
-.sig-party { margin-bottom: 16mm; }
-.sig-seal { color: #c00; }
+.sig-closing { margin-bottom: 10mm; }
+.sig-date { text-align: right; margin-bottom: 15mm; }
 "#
 }
 
