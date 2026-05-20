@@ -184,8 +184,17 @@ impl FontManager {
 
     /// Resolve a font family + weight + style to a specific font.
     pub fn resolve(&self, family: &str, weight: FontWeight, style: FontStyle) -> ResolvedFont {
+        // Exact match by family name
         for (i, ext) in self.external_fonts.iter().enumerate() {
             if ext.family_name.eq_ignore_ascii_case(family) {
+                return ResolvedFont::External(i);
+            }
+        }
+        // Partial match (family name contains the requested name, or vice versa)
+        for (i, ext) in self.external_fonts.iter().enumerate() {
+            let ext_lower = ext.family_name.to_ascii_lowercase();
+            let fam_lower = family.to_ascii_lowercase();
+            if ext_lower.contains(&fam_lower) || fam_lower.contains(&ext_lower) {
                 return ResolvedFont::External(i);
             }
         }

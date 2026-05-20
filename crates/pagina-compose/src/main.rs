@@ -266,7 +266,7 @@ fn default_contract_css() -> &'static str {
     @top-center { content: none; }
 }
 
-body { font-size: 10.5pt; line-height: 1.8; color: #222; }
+body { font-size: 10.5pt; line-height: 1.8; color: #222; font-family: "NotoSansCJKjp-Regular", Helvetica; }
 
 h1 {
     font-size: 18pt;

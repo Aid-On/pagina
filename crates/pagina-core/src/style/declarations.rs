@@ -22,6 +22,14 @@ fn apply_font_declaration(style: &mut ComputedStyle, prop: &str, value: &str, ba
         "font-size" => apply_opt_length_pt(value, base_pt, &mut style.font_size_pt),
         "font-weight" => set_if_some(&mut style.font_weight, parser::parse_font_weight_value(value)),
         "font-style" => set_if_some(&mut style.font_style, parser::parse_font_style_value(value)),
+        "font-family" => {
+            // Take first family name, strip quotes
+            let family = value.split(',').next().unwrap_or(value).trim();
+            let family = family.trim_matches('"').trim_matches('\'');
+            if !family.is_empty() {
+                style.font_family = family.to_string();
+            }
+        }
         "color" => set_if_some(&mut style.color, parser::parse_color_value(value)),
         "text-align" => set_if_some(&mut style.text_align, parser::parse_text_align_value(value)),
         "line-height" => apply_line_height(style, value, base_pt),
