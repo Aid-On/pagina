@@ -229,39 +229,35 @@ fn build_signature(def: &DocumentDef, sig: &SignatureDef) -> String {
         html.push_str(&format!("<p class=\"sig-date\">{}</p>\n", def.document.date));
     }
 
-    for (role, party) in &def.parties {
+    // Collect parties in stable order (sorted by key)
+    let mut parties: Vec<(&String, &Party)> = def.parties.iter().collect();
+    parties.sort_by(|(a, _), (b, _)| a.cmp(b));
+
+    for (role, party) in &parties {
         html.push_str("<div class=\"sig-party\">\n");
 
-        // Role + Address line
+        // Role line
+        html.push_str(&format!("<p class=\"sig-role-line\">{}</p>\n", role));
+
+        // Address
         if !party.address.is_empty() {
             html.push_str(&format!(
-                "<p class=\"sig-line\"><span class=\"sig-role\">{}</span><span class=\"sig-lbl\">住所</span>{}</p>\n",
-                role, party.address
-            ));
-        } else {
-            html.push_str(&format!(
-                "<p class=\"sig-line\"><span class=\"sig-role\">{}</span></p>\n",
-                role
+                "<p class=\"sig-field-line\">    住所    {}</p>\n",
+                party.address
             ));
         }
 
-        // Name line with seal
-        if sig.style == "seal" {
-            html.push_str(&format!(
-                "<p class=\"sig-line\"><span class=\"sig-spacer\"></span><span class=\"sig-lbl\">氏名</span>{}<span class=\"sig-seal\">印</span></p>\n",
-                party.name
-            ));
-        } else {
-            html.push_str(&format!(
-                "<p class=\"sig-line\"><span class=\"sig-spacer\"></span><span class=\"sig-lbl\">氏名</span>{}</p>\n",
-                party.name
-            ));
-        }
+        // Name + seal
+        let seal_mark = if sig.style == "seal" { "    印" } else { "" };
+        html.push_str(&format!(
+            "<p class=\"sig-field-line\">    氏名    {}{}</p>\n",
+            party.name, seal_mark
+        ));
 
-        // Representative line (if company)
+        // Representative
         if !party.representative.is_empty() {
             html.push_str(&format!(
-                "<p class=\"sig-line\"><span class=\"sig-spacer\"></span><span class=\"sig-lbl\">代表者</span>{}</p>\n",
+                "<p class=\"sig-field-line\">    代表者  {}</p>\n",
                 party.representative
             ));
         }
@@ -312,14 +308,11 @@ h1 {
 .clause ol, .clause ul { margin-bottom: 2mm; }
 
 .sig-area { break-before: page; }
-.sig-closing { margin-bottom: 12mm; font-size: 10.5pt; }
-.sig-date { text-align: right; margin-bottom: 15mm; font-size: 10.5pt; }
-.sig-party { margin-bottom: 12mm; }
-.sig-line { margin-bottom: 1.5mm; font-size: 10.5pt; }
-.sig-role { font-weight: bold; margin-bottom: 0mm; }
-.sig-spacer { display: inline; }
-.sig-lbl { font-size: 9pt; color: #555; margin-bottom: 0mm; }
-.sig-seal { color: #c00; font-size: 10pt; }
+.sig-closing { margin-bottom: 12mm; }
+.sig-date { text-align: right; margin-bottom: 15mm; }
+.sig-party { margin-bottom: 14mm; }
+.sig-role-line { font-weight: bold; margin-bottom: 2mm; }
+.sig-field-line { margin-bottom: 1mm; }
 "#
 }
 
