@@ -10,3 +10,5 @@ markup5ever.workspace = true
 markup5ever_rcdom.workspace = true
 cssparser.workspace = true
 printpdf.workspace = true
+ttf-parser.workspace = true
+image.workspace = true

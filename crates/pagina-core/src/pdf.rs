@@ -1,23 +1,47 @@
 use printpdf::{
-    BuiltinFont, Line, LinePoint, Mm, Op, PdfDocument, PdfFontHandle, PdfPage, PdfSaveOptions,
-    Point, Pt, Rgb, TextItem,
+    Line, LinePoint, Mm, Op, PdfDocument, PdfPage, PdfSaveOptions,
+    Point, Pt, RawImage, RawImageData, RawImageFormat, Rgb, TextItem, XObjectId, XObjectTransform,
 };
 
 use crate::css::values::{Color, FontStyle, FontWeight, MarginBoxPosition, TextAlign};
 use crate::css::PageStyle;
-use crate::layout::{ItemKind, Page, ResolvedMarginBox};
+use crate::font::FontManager;
+use crate::layout::{ItemKind, LoadedImage, Page, ResolvedMarginBox};
 
 /// Render laid-out pages to PDF bytes.
-pub fn render(style: &PageStyle, pages: &[Page]) -> Vec<u8> {
+pub fn render(
+    style: &PageStyle,
+    pages: &[Page],
+    images: &[LoadedImage],
+    fm: &mut FontManager,
+) -> Vec<u8> {
     let w = Mm(style.width_mm as f32);
     let h = Mm(style.height_mm as f32);
 
     let mut doc = PdfDocument::new("pagina output");
 
+    // Register external fonts
+    fm.register_with_document(&mut doc);
+
+    // Register images as XObjects
+    let image_ids: Vec<XObjectId> = images
+        .iter()
+        .map(|img| {
+            let raw = RawImage {
+                pixels: RawImageData::U8(img.pixels.clone()),
+                width: img.width as usize,
+                height: img.height as usize,
+                data_format: RawImageFormat::RGB8,
+                tag: Vec::new(),
+            };
+            doc.add_image(&raw)
+        })
+        .collect();
+
     let pdf_pages: Vec<PdfPage> = pages
         .iter()
         .map(|page| {
-            let ops = build_page_ops(style, page);
+            let ops = build_page_ops(style, page, fm, &image_ids);
             PdfPage::new(w, h, ops)
         })
         .collect();
@@ -26,22 +50,6 @@ pub fn render(style: &PageStyle, pages: &[Page]) -> Vec<u8> {
 
     let mut warnings = Vec::new();
     doc.save(&PdfSaveOptions::default(), &mut warnings)
-}
-
-fn resolve_font(weight: FontWeight, style: FontStyle, family: &str) -> BuiltinFont {
-    let is_courier = family.to_ascii_lowercase().contains("courier")
-        || family.to_ascii_lowercase().contains("mono");
-
-    match (is_courier, weight, style) {
-        (true, FontWeight::Bold, FontStyle::Italic) => BuiltinFont::CourierBoldOblique,
-        (true, FontWeight::Bold, _) => BuiltinFont::CourierBold,
-        (true, _, FontStyle::Italic) => BuiltinFont::CourierOblique,
-        (true, _, _) => BuiltinFont::Courier,
-        (false, FontWeight::Bold, FontStyle::Italic) => BuiltinFont::HelveticaBoldOblique,
-        (false, FontWeight::Bold, _) => BuiltinFont::HelveticaBold,
-        (false, _, FontStyle::Italic) => BuiltinFont::HelveticaOblique,
-        (false, _, _) => BuiltinFont::Helvetica,
-    }
 }
 
 fn color_to_printpdf(c: &Color) -> printpdf::Color {
@@ -53,49 +61,59 @@ fn color_to_printpdf(c: &Color) -> printpdf::Color {
     })
 }
 
-fn build_page_ops(style: &PageStyle, page: &Page) -> Vec<Op> {
+fn build_page_ops(
+    style: &PageStyle,
+    page: &Page,
+    fm: &FontManager,
+    image_ids: &[XObjectId],
+) -> Vec<Op> {
     let mut ops = Vec::new();
-    render_items(&mut ops, style, &page.items);
-    render_items(&mut ops, style, &page.footnotes);
-    render_margin_boxes(&mut ops, style, &page.margin_boxes);
+    render_items(&mut ops, style, &page.items, fm, image_ids);
+    render_items(&mut ops, style, &page.footnotes, fm, image_ids);
+    render_margin_boxes(&mut ops, style, &page.margin_boxes, fm);
     ops
 }
 
-fn render_items(ops: &mut Vec<Op>, style: &PageStyle, items: &[crate::layout::LayoutItem]) {
+fn render_items(
+    ops: &mut Vec<Op>,
+    style: &PageStyle,
+    items: &[crate::layout::LayoutItem],
+    fm: &FontManager,
+    image_ids: &[XObjectId],
+) {
     for item in items {
         match &item.kind {
-            ItemKind::Text => render_text_item(ops, style, item),
+            ItemKind::Text => render_text_item(ops, style, item, fm),
             ItemKind::HorizontalRule { width_mm, thickness_mm, color } => {
                 render_hr(ops, style, item, *width_mm, *thickness_mm, color);
             }
-            ItemKind::FootnoteMarker(_) | ItemKind::FootnoteRef(_) => {
-                render_text_item(ops, style, item);
+            ItemKind::Image { id, width_mm, height_mm } => {
+                if let Some(xobj_id) = image_ids.get(*id) {
+                    render_image(ops, style, item, xobj_id, *width_mm, *height_mm);
+                }
             }
         }
     }
 }
 
-fn render_text_item(ops: &mut Vec<Op>, style: &PageStyle, item: &crate::layout::LayoutItem) {
+fn render_text_item(
+    ops: &mut Vec<Op>,
+    style: &PageStyle,
+    item: &crate::layout::LayoutItem,
+    fm: &FontManager,
+) {
     let x = (style.margin_left_mm + item.x_mm) as f32;
     let y = (style.height_mm - style.margin_top_mm - item.y_mm
         - item.font_size_pt * 25.4 / 72.0) as f32;
 
-    let font = resolve_font(item.font_weight, item.font_style, &item.font_family);
+    let resolved = fm.resolve(&item.font_family, item.font_weight, item.font_style);
+    let handle = fm.pdf_handle(&resolved);
 
     ops.push(Op::StartTextSection);
-    ops.push(Op::SetFillColor {
-        col: color_to_printpdf(&item.color),
-    });
-    ops.push(Op::SetFont {
-        font: PdfFontHandle::Builtin(font),
-        size: Pt(item.font_size_pt as f32),
-    });
-    ops.push(Op::SetTextCursor {
-        pos: Point::new(Mm(x), Mm(y)),
-    });
-    ops.push(Op::ShowText {
-        items: vec![TextItem::Text(item.text.clone())],
-    });
+    ops.push(Op::SetFillColor { col: color_to_printpdf(&item.color) });
+    ops.push(Op::SetFont { font: handle, size: Pt(item.font_size_pt as f32) });
+    ops.push(Op::SetTextCursor { pos: Point::new(Mm(x), Mm(y)) });
+    ops.push(Op::ShowText { items: vec![TextItem::Text(item.text.clone())] });
     ops.push(Op::EndTextSection);
 }
 
@@ -111,9 +129,7 @@ fn render_hr(
     let y = style.height_mm - style.margin_top_mm - item.y_mm;
 
     ops.push(Op::SaveGraphicsState);
-    ops.push(Op::SetOutlineColor {
-        col: color_to_printpdf(color),
-    });
+    ops.push(Op::SetOutlineColor { col: color_to_printpdf(color) });
     ops.push(Op::SetOutlineThickness {
         pt: Pt(thickness_mm as f32 * 72.0 / 25.4),
     });
@@ -129,9 +145,41 @@ fn render_hr(
     ops.push(Op::RestoreGraphicsState);
 }
 
-fn render_margin_boxes(ops: &mut Vec<Op>, style: &PageStyle, boxes: &[ResolvedMarginBox]) {
+fn render_image(
+    ops: &mut Vec<Op>,
+    style: &PageStyle,
+    item: &crate::layout::LayoutItem,
+    xobj_id: &XObjectId,
+    width_mm: f64,
+    height_mm: f64,
+) {
+    let x = style.margin_left_mm + item.x_mm;
+    // Y: bottom-up, image positioned from its bottom-left corner
+    let y = style.height_mm - style.margin_top_mm - item.y_mm - height_mm;
+
+    ops.push(Op::UseXobject {
+        id: xobj_id.clone(),
+        transform: XObjectTransform {
+            translate_x: Some(Pt(x as f32 * 72.0 / 25.4)),
+            translate_y: Some(Pt(y as f32 * 72.0 / 25.4)),
+            scale_x: Some(width_mm as f32 * 72.0 / 25.4),
+            scale_y: Some(height_mm as f32 * 72.0 / 25.4),
+            dpi: Some(72.0),
+            rotate: None,
+        },
+    });
+}
+
+fn render_margin_boxes(
+    ops: &mut Vec<Op>,
+    style: &PageStyle,
+    boxes: &[ResolvedMarginBox],
+    fm: &FontManager,
+) {
     for mb in boxes {
-        let text_width_mm = mb.text.len() as f64 * mb.font_size_pt * 0.5 * 25.4 / 72.0;
+        let resolved = fm.resolve("Helvetica", FontWeight::Normal, FontStyle::Normal);
+        let metrics = fm.metrics(&resolved);
+        let text_width_mm = metrics.text_width_mm(&mb.text, mb.font_size_pt);
         let area_width = margin_box_area_width(style, &mb.position);
         let area_x = margin_box_area_x(style, &mb.position);
 
@@ -150,20 +198,13 @@ fn render_margin_boxes(ops: &mut Vec<Op>, style: &PageStyle, boxes: &[ResolvedMa
             style.height_mm / 2.0
         };
 
+        let handle = fm.pdf_handle(&resolved);
+
         ops.push(Op::StartTextSection);
-        ops.push(Op::SetFillColor {
-            col: color_to_printpdf(&mb.color),
-        });
-        ops.push(Op::SetFont {
-            font: PdfFontHandle::Builtin(BuiltinFont::Helvetica),
-            size: Pt(mb.font_size_pt as f32),
-        });
-        ops.push(Op::SetTextCursor {
-            pos: Point::new(Mm(x as f32), Mm(y as f32)),
-        });
-        ops.push(Op::ShowText {
-            items: vec![TextItem::Text(mb.text.clone())],
-        });
+        ops.push(Op::SetFillColor { col: color_to_printpdf(&mb.color) });
+        ops.push(Op::SetFont { font: handle, size: Pt(mb.font_size_pt as f32) });
+        ops.push(Op::SetTextCursor { pos: Point::new(Mm(x as f32), Mm(y as f32)) });
+        ops.push(Op::ShowText { items: vec![TextItem::Text(mb.text.clone())] });
         ops.push(Op::EndTextSection);
     }
 }
@@ -174,7 +215,7 @@ fn margin_box_area_x(style: &PageStyle, pos: &MarginBoxPosition) -> f64 {
         MarginBoxPosition::RightTop | MarginBoxPosition::RightMiddle | MarginBoxPosition::RightBottom => {
             style.width_mm - style.margin_right_mm
         }
-        _ => style.margin_left_mm, // top/bottom boxes span the content area
+        _ => style.margin_left_mm,
     }
 }
 
@@ -183,12 +224,8 @@ fn margin_box_area_width(style: &PageStyle, pos: &MarginBoxPosition) -> f64 {
         MarginBoxPosition::TopLeft | MarginBoxPosition::BottomLeft => style.content_width_mm() / 3.0,
         MarginBoxPosition::TopCenter | MarginBoxPosition::BottomCenter => style.content_width_mm(),
         MarginBoxPosition::TopRight | MarginBoxPosition::BottomRight => style.content_width_mm() / 3.0,
-        MarginBoxPosition::LeftTop | MarginBoxPosition::LeftMiddle | MarginBoxPosition::LeftBottom => {
-            style.margin_left_mm
-        }
-        MarginBoxPosition::RightTop | MarginBoxPosition::RightMiddle | MarginBoxPosition::RightBottom => {
-            style.margin_right_mm
-        }
+        MarginBoxPosition::LeftTop | MarginBoxPosition::LeftMiddle | MarginBoxPosition::LeftBottom => style.margin_left_mm,
+        MarginBoxPosition::RightTop | MarginBoxPosition::RightMiddle | MarginBoxPosition::RightBottom => style.margin_right_mm,
         _ => style.content_width_mm(),
     }
 }

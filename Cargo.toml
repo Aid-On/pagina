@@ -15,4 +15,6 @@ markup5ever = "0.39"
 markup5ever_rcdom = "0.39"
 cssparser = "0.37"
 printpdf = "0.9"
+ttf-parser = "0.25"
+image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
 clap = { version = "4", features = ["derive"] }

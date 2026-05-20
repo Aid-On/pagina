@@ -2,6 +2,7 @@ use std::collections::HashMap;
 
 use crate::css::values::*;
 use crate::css::PageStyleSet;
+use crate::font::FontManager;
 use crate::style::{ComputedStyle, StringSetSource, StyledContent, StyledNode};
 
 // ═══════════════════════════════════════════════════════════════
@@ -32,8 +33,7 @@ pub struct LayoutItem {
 pub enum ItemKind {
     Text,
     HorizontalRule { width_mm: f64, thickness_mm: f64, color: Color },
-    FootnoteMarker(usize),
-    FootnoteRef(usize),
+    Image { id: usize, width_mm: f64, height_mm: f64 },
 }
 
 #[derive(Debug)]
@@ -45,108 +45,148 @@ pub struct ResolvedMarginBox {
     pub text_align: TextAlign,
 }
 
+/// An image loaded from the document, ready for embedding.
+#[derive(Debug)]
+pub struct LoadedImage {
+    pub pixels: Vec<u8>,
+    pub width: u32,
+    pub height: u32,
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  Inline run types (for mixed-style text within a line)
+// ═══════════════════════════════════════════════════════════════
+
+#[derive(Debug, Clone)]
+struct InlineStyle {
+    font_size_pt: f64,
+    font_weight: FontWeight,
+    font_style: FontStyle,
+    font_family: String,
+    color: Color,
+}
+
+impl InlineStyle {
+    fn from_computed(s: &ComputedStyle) -> Self {
+        Self {
+            font_size_pt: s.font_size_pt,
+            font_weight: s.font_weight,
+            font_style: s.font_style,
+            font_family: s.font_family.clone(),
+            color: s.color,
+        }
+    }
+}
+
+/// A word (or non-breakable token) with its style.
+#[derive(Debug, Clone)]
+struct StyledWord {
+    text: String,
+    style: InlineStyle,
+    width_mm: f64,
+}
+
+/// A laid-out line: sequence of segments, each with position and style.
+struct LayoutLine {
+    segments: Vec<LineSegment>,
+    total_width_mm: f64,
+    max_line_height_mm: f64,
+}
+
+struct LineSegment {
+    text: String,
+    x_mm: f64,
+    width_mm: f64,
+    style: InlineStyle,
+}
+
 // ═══════════════════════════════════════════════════════════════
 //  Layout state
 // ═══════════════════════════════════════════════════════════════
 
-struct LayoutState {
+struct LayoutState<'a> {
     page_styles: PageStyleSet,
+    fm: &'a FontManager,
     content_width_mm: f64,
     content_height_mm: f64,
 
     pages: Vec<Page>,
     current_y: f64,
 
-    // Running strings for margin boxes
     running_strings: HashMap<String, String>,
-
-    // Footnote state
     footnotes_pending: Vec<FootnoteData>,
     footnote_counter: usize,
     footnote_area_height: f64,
+
+    images: Vec<LoadedImage>,
 }
 
 struct FootnoteData {
     number: usize,
     text: String,
-    style: ComputedStyle,
+    style: InlineStyle,
 }
 
-impl LayoutState {
-    fn new(page_styles: PageStyleSet) -> Self {
-        let content_width = page_styles.base.content_width_mm();
-        let content_height = page_styles.base.content_height_mm();
+impl<'a> LayoutState<'a> {
+    fn new(page_styles: PageStyleSet, fm: &'a FontManager) -> Self {
+        let cw = page_styles.base.content_width_mm();
+        let ch = page_styles.base.content_height_mm();
         Self {
             page_styles,
-            content_width_mm: content_width,
-            content_height_mm: content_height,
-            pages: vec![Page {
-                items: Vec::new(),
-                footnotes: Vec::new(),
-                margin_boxes: Vec::new(),
-            }],
+            fm,
+            content_width_mm: cw,
+            content_height_mm: ch,
+            pages: vec![Page { items: Vec::new(), footnotes: Vec::new(), margin_boxes: Vec::new() }],
             current_y: 0.0,
             running_strings: HashMap::new(),
             footnotes_pending: Vec::new(),
             footnote_counter: 0,
             footnote_area_height: 0.0,
+            images: Vec::new(),
         }
     }
 
     fn new_page(&mut self) {
         self.flush_footnotes();
-        self.pages.push(Page {
-            items: Vec::new(),
-            footnotes: Vec::new(),
-            margin_boxes: Vec::new(),
-        });
+        self.pages.push(Page { items: Vec::new(), footnotes: Vec::new(), margin_boxes: Vec::new() });
         self.current_y = 0.0;
         self.footnote_area_height = 0.0;
+    }
+
+    fn available_height(&self) -> f64 {
+        self.content_height_mm - self.current_y - self.footnote_area_height
     }
 
     fn push_item(&mut self, item: LayoutItem) {
         self.pages.last_mut().unwrap().items.push(item);
     }
 
-    fn add_footnote(&mut self, text: String, style: &ComputedStyle) {
+    fn add_footnote(&mut self, text: String, style: &InlineStyle) {
         self.footnote_counter += 1;
         let num = self.footnote_counter;
-        let fn_style = ComputedStyle {
+        let fn_style = InlineStyle {
             font_size_pt: 8.0,
             ..style.clone()
         };
-        self.footnotes_pending.push(FootnoteData {
-            number: num,
-            text,
-            style: fn_style,
-        });
-        // Reserve space for the footnote
+        self.footnotes_pending.push(FootnoteData { number: num, text, style: fn_style });
         let lh = 8.0 * 1.3 * 25.4 / 72.0;
-        self.footnote_area_height += lh + 1.0; // rough estimate
+        self.footnote_area_height += lh + 1.0;
     }
 
     fn flush_footnotes(&mut self) {
         if self.footnotes_pending.is_empty() {
             return;
         }
-
         let page = self.pages.last_mut().unwrap();
         let footnotes = std::mem::take(&mut self.footnotes_pending);
-
-        // Footnotes render at the bottom of the content area
         let fn_start_y = self.content_height_mm - self.footnote_area_height;
         let mut fn_y = fn_start_y;
 
-        // Separator line
         page.footnotes.push(LayoutItem {
-            x_mm: 0.0,
-            y_mm: fn_y,
-            font_size_pt: 8.0,
-            font_weight: FontWeight::Normal,
-            font_style: FontStyle::Normal,
-            font_family: "Helvetica".to_string(),
-            color: Color::BLACK,
-            text: String::new(),
+            x_mm: 0.0, y_mm: fn_y,
+            font_size_pt: 0.0, font_weight: FontWeight::Normal,
+            font_style: FontStyle::Normal, font_family: String::new(),
+            color: Color::BLACK, text: String::new(),
             kind: ItemKind::HorizontalRule {
                 width_mm: self.content_width_mm * 0.3,
                 thickness_mm: 0.15,
@@ -157,21 +197,18 @@ impl LayoutState {
 
         for fnd in &footnotes {
             let lh = fnd.style.font_size_pt * 1.3 * 25.4 / 72.0;
-            let marker_text = format!("{}. {}", fnd.number, fnd.text);
             page.footnotes.push(LayoutItem {
-                x_mm: 0.0,
-                y_mm: fn_y,
+                x_mm: 0.0, y_mm: fn_y,
                 font_size_pt: fnd.style.font_size_pt,
                 font_weight: fnd.style.font_weight,
                 font_style: fnd.style.font_style,
                 font_family: fnd.style.font_family.clone(),
                 color: fnd.style.color,
-                text: marker_text,
+                text: format!("{}. {}", fnd.number, fnd.text),
                 kind: ItemKind::Text,
             });
             fn_y += lh;
         }
-
         self.footnote_area_height = 0.0;
     }
 
@@ -180,14 +217,8 @@ impl LayoutState {
         for page_num in 0..total_pages {
             let page_style = self.page_styles.for_page(page_num + 1, total_pages);
             let mut boxes = Vec::new();
-
             for (pos, mb) in &page_style.margin_boxes {
-                let text = resolve_content(
-                    &mb.content,
-                    page_num + 1,
-                    total_pages,
-                    &self.running_strings,
-                );
+                let text = resolve_content(&mb.content, page_num + 1, total_pages, &self.running_strings);
                 if !text.is_empty() {
                     boxes.push(ResolvedMarginBox {
                         position: *pos,
@@ -203,7 +234,6 @@ impl LayoutState {
                     });
                 }
             }
-
             self.pages[page_num].margin_boxes = boxes;
         }
     }
@@ -229,7 +259,6 @@ fn resolve_content(
                     out.push_str(val);
                 }
             }
-            ContentItem::None => {}
             _ => {}
         }
     }
@@ -237,72 +266,203 @@ fn resolve_content(
 }
 
 // ═══════════════════════════════════════════════════════════════
-//  Text helpers
+//  Inline run collection
 // ═══════════════════════════════════════════════════════════════
 
-fn char_width_mm(font_size_pt: f64, font_weight: FontWeight) -> f64 {
-    let factor = match font_weight {
-        FontWeight::Bold => 0.54,
-        FontWeight::Normal => 0.50,
-    };
-    font_size_pt * factor * 25.4 / 72.0
-}
+/// Collect inline content from a block node into styled words for line breaking.
+fn collect_styled_words(
+    node: &StyledNode,
+    fm: &FontManager,
+    words: &mut Vec<StyledWord>,
+    footnotes: &mut Vec<(String, InlineStyle)>,
+    footnote_counter: &mut usize,
+) {
+    for child in &node.children {
+        match child {
+            StyledContent::Text(text) => {
+                let style = InlineStyle::from_computed(&node.style);
+                let resolved = fm.resolve(&style.font_family, style.font_weight, style.font_style);
+                let metrics = fm.metrics(&resolved);
 
-fn line_height_mm(font_size_pt: f64, line_height: f64) -> f64 {
-    font_size_pt * line_height * 25.4 / 72.0
-}
+                // Split text into words, preserving spaces as separate tokens
+                for segment in text.split_inclusive(' ') {
+                    let word_part = segment.trim_end_matches(' ');
+                    let has_trailing_space = segment.ends_with(' ');
 
-fn wrap_lines(text: &str, max_width_mm: f64, cw: f64) -> Vec<String> {
-    let max_chars = (max_width_mm / cw).floor() as usize;
-    if max_chars == 0 {
-        return vec![text.to_string()];
-    }
+                    if !word_part.is_empty() {
+                        let width = metrics.text_width_mm(word_part, style.font_size_pt);
+                        words.push(StyledWord {
+                            text: word_part.to_string(),
+                            style: style.clone(),
+                            width_mm: width,
+                        });
+                    }
 
-    let mut lines = Vec::new();
-    for raw_line in text.split('\n') {
-        let words: Vec<&str> = raw_line.split_whitespace().collect();
-        if words.is_empty() {
-            lines.push(String::new());
-            continue;
-        }
-        let mut current = String::new();
-        for word in words {
-            if current.is_empty() {
-                current = word.to_string();
-            } else if current.len() + 1 + word.len() <= max_chars {
-                current.push(' ');
-                current.push_str(word);
-            } else {
-                lines.push(std::mem::take(&mut current));
-                current = word.to_string();
+                    if has_trailing_space {
+                        let sw = metrics.space_width_mm(style.font_size_pt);
+                        words.push(StyledWord {
+                            text: " ".to_string(),
+                            style: style.clone(),
+                            width_mm: sw,
+                        });
+                    }
+                }
+            }
+            StyledContent::Element(child_node) => {
+                if child_node.style.is_footnote {
+                    *footnote_counter += 1;
+                    let num = *footnote_counter;
+                    let fn_text = collect_text_content(child_node);
+                    footnotes.push((fn_text, InlineStyle::from_computed(&child_node.style)));
+
+                    // Insert superscript reference [n]
+                    let ref_text = format!("[{num}]");
+                    let ref_style = InlineStyle {
+                        font_size_pt: node.style.font_size_pt * 0.7,
+                        ..InlineStyle::from_computed(&node.style)
+                    };
+                    let resolved = fm.resolve(&ref_style.font_family, ref_style.font_weight, ref_style.font_style);
+                    let width = fm.metrics(&resolved).text_width_mm(&ref_text, ref_style.font_size_pt);
+                    words.push(StyledWord { text: ref_text, style: ref_style, width_mm: width });
+                } else {
+                    // Recurse into inline children (strong, em, a, span, etc.)
+                    collect_styled_words(child_node, fm, words, footnotes, footnote_counter);
+                }
             }
         }
-        if !current.is_empty() {
-            lines.push(current);
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  Line breaking with accurate widths
+// ═══════════════════════════════════════════════════════════════
+
+fn break_into_lines(words: &[StyledWord], max_width_mm: f64, default_lh: f64) -> Vec<LayoutLine> {
+    let mut lines: Vec<LayoutLine> = Vec::new();
+    let mut current_segments: Vec<LineSegment> = Vec::new();
+    let mut current_x = 0.0_f64;
+    let mut max_lh = default_lh;
+
+    for word in words {
+        // Newline handling
+        if word.text.contains('\n') {
+            for (i, part) in word.text.split('\n').enumerate() {
+                if i > 0 {
+                    lines.push(finish_line(&mut current_segments, current_x, max_lh));
+                    current_x = 0.0;
+                    max_lh = default_lh;
+                }
+                if !part.is_empty() {
+                    let resolved = crate::font::resolve_builtin(word.style.font_weight, word.style.font_style, &word.style.font_family);
+                    let _ = resolved; // width already computed
+                    current_segments.push(LineSegment {
+                        text: part.to_string(),
+                        x_mm: current_x,
+                        width_mm: word.width_mm,
+                        style: word.style.clone(),
+                    });
+                    current_x += word.width_mm;
+                }
+            }
+            continue;
         }
+
+        // Space handling: append to previous segment if same style
+        if word.text == " " {
+            if current_x > 0.0 {
+                if let Some(last) = current_segments.last_mut() {
+                    if same_inline_style(&last.style, &word.style) {
+                        last.text.push(' ');
+                        last.width_mm += word.width_mm;
+                    }
+                }
+                current_x += word.width_mm;
+            }
+            continue;
+        }
+
+        let word_lh = word.style.font_size_pt * 1.4 * 25.4 / 72.0;
+
+        // Check if word fits on current line
+        if current_x + word.width_mm > max_width_mm && current_x > 0.0 {
+            // Trim trailing space from last segment before wrapping
+            if let Some(last) = current_segments.last_mut() {
+                if last.text.ends_with(' ') {
+                    last.text.pop();
+                }
+            }
+            lines.push(finish_line(&mut current_segments, current_x, max_lh));
+            current_x = 0.0;
+            max_lh = default_lh;
+        }
+
+        max_lh = max_lh.max(word_lh);
+
+        // Merge with previous segment if same style and was space-terminated
+        if let Some(last) = current_segments.last_mut() {
+            if same_inline_style(&last.style, &word.style) && last.text.ends_with(' ') {
+                last.text.push_str(&word.text);
+                last.width_mm = current_x + word.width_mm - last.x_mm;
+                current_x += word.width_mm;
+                continue;
+            }
+        }
+
+        current_segments.push(LineSegment {
+            text: word.text.clone(),
+            x_mm: current_x,
+            width_mm: word.width_mm,
+            style: word.style.clone(),
+        });
+        current_x += word.width_mm;
+
+        // Add inter-word space width after the word for next word's position
+        // (the actual space word will add it)
     }
-    if lines.is_empty() {
-        lines.push(String::new());
+
+    if !current_segments.is_empty() {
+        lines.push(finish_line(&mut current_segments, current_x, max_lh));
     }
+
     lines
+}
+
+fn same_inline_style(a: &InlineStyle, b: &InlineStyle) -> bool {
+    a.font_size_pt == b.font_size_pt
+        && a.font_weight == b.font_weight
+        && a.font_style == b.font_style
+        && a.font_family == b.font_family
+        && a.color.r == b.color.r
+        && a.color.g == b.color.g
+        && a.color.b == b.color.b
+}
+
+fn finish_line(segments: &mut Vec<LineSegment>, total_width: f64, max_lh: f64) -> LayoutLine {
+    LayoutLine {
+        segments: std::mem::take(segments),
+        total_width_mm: total_width,
+        max_line_height_mm: max_lh,
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════
 //  Main layout
 // ═══════════════════════════════════════════════════════════════
 
-pub fn lay_out(page_styles: &PageStyleSet, tree: &StyledNode) -> Vec<Page> {
-    let mut state = LayoutState::new(page_styles.clone());
-    lay_out_node(tree, &mut state, false);
+pub fn lay_out(page_styles: &PageStyleSet, tree: &StyledNode, fm: &FontManager) -> (Vec<Page>, Vec<LoadedImage>) {
+    let mut state = LayoutState::new(page_styles.clone(), fm);
+    lay_out_node(tree, &mut state, true);
     state.flush_footnotes();
     state.resolve_margin_boxes();
 
-    // Remove trailing empty pages
-    while state.pages.len() > 1 && state.pages.last().map_or(false, |p| p.items.is_empty() && p.footnotes.is_empty()) {
+    while state.pages.len() > 1
+        && state.pages.last().map_or(false, |p| p.items.is_empty() && p.footnotes.is_empty())
+    {
         state.pages.pop();
     }
 
-    state.pages
+    let images = std::mem::take(&mut state.images);
+    (state.pages, images)
 }
 
 fn lay_out_node(node: &StyledNode, state: &mut LayoutState, is_first_block: bool) {
@@ -310,9 +470,7 @@ fn lay_out_node(node: &StyledNode, state: &mut LayoutState, is_first_block: bool
     if let Some((name, source)) = &node.style.string_set {
         let value = match source {
             StringSetSource::Content => collect_text_content(node),
-            StringSetSource::Attr(attr) => node
-                .attrs
-                .iter()
+            StringSetSource::Attr(attr) => node.attrs.iter()
                 .find(|(k, _)| k == attr)
                 .map(|(_, v)| v.clone())
                 .unwrap_or_default(),
@@ -326,8 +484,8 @@ fn lay_out_node(node: &StyledNode, state: &mut LayoutState, is_first_block: bool
     }
 
     match node.tag.as_str() {
-        "#document" | "html" | "body" | "main" | "article" | "section" | "div" | "header"
-        | "footer" | "nav" | "aside" | "figure" => {
+        "#document" | "html" | "body" | "main" | "article" | "section" | "div"
+        | "header" | "footer" | "nav" | "aside" | "figure" => {
             let mut first = true;
             for child in &node.children {
                 match child {
@@ -338,7 +496,7 @@ fn lay_out_node(node: &StyledNode, state: &mut LayoutState, is_first_block: bool
                     StyledContent::Text(text) => {
                         let trimmed = text.trim();
                         if !trimmed.is_empty() {
-                            lay_out_text_block(trimmed, &node.style, state);
+                            lay_out_simple_text(trimmed, &node.style, state);
                         }
                     }
                 }
@@ -347,14 +505,10 @@ fn lay_out_node(node: &StyledNode, state: &mut LayoutState, is_first_block: bool
         "hr" => {
             state.current_y += node.style.margin_top_mm;
             state.push_item(LayoutItem {
-                x_mm: 0.0,
-                y_mm: state.current_y,
-                font_size_pt: 0.0,
-                font_weight: FontWeight::Normal,
-                font_style: FontStyle::Normal,
-                font_family: String::new(),
-                color: Color::BLACK,
-                text: String::new(),
+                x_mm: 0.0, y_mm: state.current_y,
+                font_size_pt: 0.0, font_weight: FontWeight::Normal,
+                font_style: FontStyle::Normal, font_family: String::new(),
+                color: Color::BLACK, text: String::new(),
                 kind: ItemKind::HorizontalRule {
                     width_mm: state.content_width_mm,
                     thickness_mm: node.style.border_bottom_width_mm.max(0.2),
@@ -362,6 +516,9 @@ fn lay_out_node(node: &StyledNode, state: &mut LayoutState, is_first_block: bool
                 },
             });
             state.current_y += node.style.margin_bottom_mm + 0.5;
+        }
+        "img" => {
+            lay_out_image(node, state);
         }
         "ul" | "ol" => {
             state.current_y += node.style.margin_top_mm;
@@ -383,56 +540,83 @@ fn lay_out_node(node: &StyledNode, state: &mut LayoutState, is_first_block: bool
             lay_out_table(node, state);
         }
         _ => {
-            // Leaf block: h1-h6, p, blockquote, pre, li, etc.
             lay_out_block(node, state);
         }
     }
 
-    // Handle break-after
     if node.style.break_after == BreakValue::Page && state.current_y > 0.0 {
         state.new_page();
     }
 }
 
+/// Layout a block element with inline children (the core mixed-style path).
 fn lay_out_block(node: &StyledNode, state: &mut LayoutState) {
     let style = &node.style;
 
-    // Collect text content (handling inline children like <strong>, <em>, <a>)
-    let mut segments = Vec::new();
+    // Collect inline content into styled words
+    let mut words = Vec::new();
     let mut footnote_refs = Vec::new();
-    collect_inline_segments(node, &mut segments, &mut footnote_refs, state);
+    collect_styled_words(node, state.fm, &mut words, &mut footnote_refs, &mut state.footnote_counter);
 
-    // Process footnotes
+    // Register footnotes
     for (fn_text, fn_style) in &footnote_refs {
         state.add_footnote(fn_text.clone(), fn_style);
     }
 
-    // Merge segments into a single text for word wrapping (simplified)
-    let full_text: String = segments.iter().map(|s| s.text.as_str()).collect::<Vec<_>>().join("");
-    let trimmed = full_text.trim();
-    if trimmed.is_empty() && style.border_bottom_width_mm == 0.0 {
+    // Check if there's any content
+    let has_text = words.iter().any(|w| w.text.trim().len() > 0);
+    if !has_text && style.border_bottom_width_mm == 0.0 {
         return;
     }
 
     state.current_y += style.margin_top_mm + style.padding_top_mm;
 
-    if !trimmed.is_empty() {
-        // Use the primary style for layout metrics
-        let primary_style = if segments.is_empty() { style } else { &segments[0].style };
-        lay_out_text_block(trimmed, primary_style, state);
+    if has_text {
+        let default_lh = state.fm.metrics(
+            &state.fm.resolve(&style.font_family, style.font_weight, style.font_style)
+        ).line_height_mm(style.font_size_pt, style.line_height);
+
+        let lines = break_into_lines(&words, state.content_width_mm, default_lh);
+
+        for line in &lines {
+            if state.current_y + line.max_line_height_mm > state.available_height()
+                && !state.pages.last().unwrap().items.is_empty()
+            {
+                state.new_page();
+            }
+
+            // Apply text-align offset
+            let align_offset = match style.text_align {
+                TextAlign::Center => (state.content_width_mm - line.total_width_mm).max(0.0) / 2.0,
+                TextAlign::Right => (state.content_width_mm - line.total_width_mm).max(0.0),
+                _ => 0.0,
+            };
+
+            for seg in &line.segments {
+                state.push_item(LayoutItem {
+                    x_mm: seg.x_mm + align_offset,
+                    y_mm: state.current_y,
+                    font_size_pt: seg.style.font_size_pt,
+                    font_weight: seg.style.font_weight,
+                    font_style: seg.style.font_style,
+                    font_family: seg.style.font_family.clone(),
+                    color: seg.style.color,
+                    text: seg.text.clone(),
+                    kind: ItemKind::Text,
+                });
+            }
+
+            state.current_y += line.max_line_height_mm;
+        }
     }
 
     // Border bottom
     if style.border_bottom_width_mm > 0.0 {
         state.push_item(LayoutItem {
-            x_mm: 0.0,
-            y_mm: state.current_y,
-            font_size_pt: 0.0,
-            font_weight: FontWeight::Normal,
-            font_style: FontStyle::Normal,
-            font_family: String::new(),
-            color: Color::BLACK,
-            text: String::new(),
+            x_mm: 0.0, y_mm: state.current_y,
+            font_size_pt: 0.0, font_weight: FontWeight::Normal,
+            font_style: FontStyle::Normal, font_family: String::new(),
+            color: Color::BLACK, text: String::new(),
             kind: ItemKind::HorizontalRule {
                 width_mm: state.content_width_mm,
                 thickness_mm: style.border_bottom_width_mm,
@@ -445,109 +629,156 @@ fn lay_out_block(node: &StyledNode, state: &mut LayoutState) {
     state.current_y += style.padding_bottom_mm + style.margin_bottom_mm;
 }
 
-struct InlineSegment {
-    text: String,
-    style: ComputedStyle,
-}
+/// Simple text layout (fallback, single style).
+fn lay_out_simple_text(text: &str, style: &ComputedStyle, state: &mut LayoutState) {
+    let inline_style = InlineStyle::from_computed(style);
+    let resolved = state.fm.resolve(&style.font_family, style.font_weight, style.font_style);
+    let metrics = state.fm.metrics(&resolved);
+    let lh = metrics.line_height_mm(style.font_size_pt, style.line_height);
 
-fn collect_inline_segments(
-    node: &StyledNode,
-    segments: &mut Vec<InlineSegment>,
-    footnotes: &mut Vec<(String, ComputedStyle)>,
-    state: &mut LayoutState,
-) {
-    for child in &node.children {
-        match child {
-            StyledContent::Text(text) => {
-                segments.push(InlineSegment {
-                    text: text.clone(),
-                    style: node.style.clone(),
-                });
-            }
-            StyledContent::Element(child_node) => {
-                if child_node.style.is_footnote {
-                    // Extract footnote text
-                    let fn_text = collect_text_content(child_node);
-                    state.footnote_counter += 1;
-                    let num = state.footnote_counter;
-                    footnotes.push((fn_text, child_node.style.clone()));
-                    // Insert superscript reference
-                    segments.push(InlineSegment {
-                        text: format!("[{num}]"),
-                        style: ComputedStyle {
-                            font_size_pt: node.style.font_size_pt * 0.7,
-                            ..node.style.clone()
-                        },
-                    });
-                    // Fix: we incremented counter here AND in add_footnote. Undo one.
-                    state.footnote_counter -= 1;
-                } else if child_node.style.display == Display::Inline {
-                    collect_inline_segments(child_node, segments, footnotes, state);
-                } else {
-                    // Block inside inline — treat as inline for simplicity
-                    collect_inline_segments(child_node, segments, footnotes, state);
-                }
-            }
-        }
+    // Simple word wrap
+    let mut words = Vec::new();
+    for word in text.split_whitespace() {
+        let w = metrics.text_width_mm(word, style.font_size_pt);
+        words.push(StyledWord { text: word.to_string(), style: inline_style.clone(), width_mm: w });
+        let sw = metrics.space_width_mm(style.font_size_pt);
+        words.push(StyledWord { text: " ".to_string(), style: inline_style.clone(), width_mm: sw });
     }
-}
 
-fn lay_out_text_block(text: &str, style: &ComputedStyle, state: &mut LayoutState) {
-    let cw = char_width_mm(style.font_size_pt, style.font_weight);
-    let lh = line_height_mm(style.font_size_pt, style.line_height);
-    let lines = wrap_lines(text, state.content_width_mm, cw);
-
+    let lines = break_into_lines(&words, state.content_width_mm, lh);
     for line in &lines {
-        if state.current_y + lh > state.content_height_mm - state.footnote_area_height
+        if state.current_y + line.max_line_height_mm > state.content_height_mm
             && !state.pages.last().unwrap().items.is_empty()
         {
             state.new_page();
         }
-
-        if !line.is_empty() {
-            let x = match style.text_align {
-                TextAlign::Center => {
-                    let text_width = line.len() as f64 * cw;
-                    (state.content_width_mm - text_width).max(0.0) / 2.0
-                }
-                TextAlign::Right => {
-                    let text_width = line.len() as f64 * cw;
-                    (state.content_width_mm - text_width).max(0.0)
-                }
-                _ => 0.0,
-            };
-
+        for seg in &line.segments {
             state.push_item(LayoutItem {
-                x_mm: x,
+                x_mm: seg.x_mm,
                 y_mm: state.current_y,
-                font_size_pt: style.font_size_pt,
-                font_weight: style.font_weight,
-                font_style: style.font_style,
-                font_family: style.font_family.clone(),
-                color: style.color,
-                text: line.clone(),
+                font_size_pt: seg.style.font_size_pt,
+                font_weight: seg.style.font_weight,
+                font_style: seg.style.font_style,
+                font_family: seg.style.font_family.clone(),
+                color: seg.style.color,
+                text: seg.text.clone(),
                 kind: ItemKind::Text,
             });
         }
-        state.current_y += lh;
+        state.current_y += line.max_line_height_mm;
     }
 }
 
 fn lay_out_list_item(li: &StyledNode, prefix: &str, state: &mut LayoutState) {
-    let text = collect_text_content(li).trim().to_string();
-    if text.is_empty() {
-        return;
-    }
-    let full_text = format!("{prefix}{text}");
     state.current_y += li.style.margin_top_mm;
-    lay_out_text_block(&full_text, &li.style, state);
+
+    // Collect inline content with prefix prepended
+    let inline_style = InlineStyle::from_computed(&li.style);
+    let resolved = state.fm.resolve(&li.style.font_family, li.style.font_weight, li.style.font_style);
+    let metrics = state.fm.metrics(&resolved);
+
+    let mut words = Vec::new();
+    // Add prefix as first word
+    let prefix_w = metrics.text_width_mm(prefix, li.style.font_size_pt);
+    words.push(StyledWord { text: prefix.to_string(), style: inline_style.clone(), width_mm: prefix_w });
+
+    let mut footnote_refs = Vec::new();
+    collect_styled_words(li, state.fm, &mut words, &mut footnote_refs, &mut state.footnote_counter);
+    for (fn_text, fn_style) in &footnote_refs {
+        state.add_footnote(fn_text.clone(), fn_style);
+    }
+
+    let lh = metrics.line_height_mm(li.style.font_size_pt, li.style.line_height);
+    let lines = break_into_lines(&words, state.content_width_mm, lh);
+
+    for line in &lines {
+        if state.current_y + line.max_line_height_mm > state.available_height()
+            && !state.pages.last().unwrap().items.is_empty()
+        {
+            state.new_page();
+        }
+        for seg in &line.segments {
+            state.push_item(LayoutItem {
+                x_mm: seg.x_mm,
+                y_mm: state.current_y,
+                font_size_pt: seg.style.font_size_pt,
+                font_weight: seg.style.font_weight,
+                font_style: seg.style.font_style,
+                font_family: seg.style.font_family.clone(),
+                color: seg.style.color,
+                text: seg.text.clone(),
+                kind: ItemKind::Text,
+            });
+        }
+        state.current_y += line.max_line_height_mm;
+    }
+
     state.current_y += li.style.margin_bottom_mm;
+}
+
+fn lay_out_image(node: &StyledNode, state: &mut LayoutState) {
+    let src = node.attrs.iter().find(|(k, _)| k == "src").map(|(_, v)| v.as_str());
+    let src = match src {
+        Some(s) => s,
+        None => return,
+    };
+
+    // Try to load the image
+    let img = match image::open(src) {
+        Ok(img) => img,
+        Err(_) => return,
+    };
+
+    let (img_w, img_h) = (img.width(), img.height());
+    let rgb = img.to_rgb8();
+
+    // Scale to fit content width (max 100% of content area, maintain aspect ratio)
+    let dpi = 96.0;
+    let natural_width_mm = img_w as f64 / dpi * 25.4;
+    let natural_height_mm = img_h as f64 / dpi * 25.4;
+
+    let scale = if natural_width_mm > state.content_width_mm {
+        state.content_width_mm / natural_width_mm
+    } else {
+        1.0
+    };
+
+    let display_w = natural_width_mm * scale;
+    let display_h = natural_height_mm * scale;
+
+    state.current_y += node.style.margin_top_mm;
+
+    if state.current_y + display_h > state.available_height()
+        && !state.pages.last().unwrap().items.is_empty()
+    {
+        state.new_page();
+    }
+
+    let image_id = state.images.len();
+    state.images.push(LoadedImage {
+        pixels: rgb.into_raw(),
+        width: img_w,
+        height: img_h,
+    });
+
+    state.push_item(LayoutItem {
+        x_mm: 0.0,
+        y_mm: state.current_y,
+        font_size_pt: 0.0,
+        font_weight: FontWeight::Normal,
+        font_style: FontStyle::Normal,
+        font_family: String::new(),
+        color: Color::BLACK,
+        text: String::new(),
+        kind: ItemKind::Image { id: image_id, width_mm: display_w, height_mm: display_h },
+    });
+
+    state.current_y += display_h + node.style.margin_bottom_mm;
 }
 
 fn lay_out_table(node: &StyledNode, state: &mut LayoutState) {
     state.current_y += node.style.margin_top_mm;
 
-    // Collect rows
     let mut rows: Vec<Vec<String>> = Vec::new();
     let mut is_header: Vec<bool> = Vec::new();
 
@@ -579,27 +810,23 @@ fn lay_out_table(node: &StyledNode, state: &mut LayoutState) {
         return;
     }
 
-    // Calculate column widths (equal distribution)
     let num_cols = rows.iter().map(|r| r.len()).max().unwrap_or(1);
     let col_width = state.content_width_mm / num_cols as f64;
-    let cell_padding = 1.5; // mm
-
-    let fs = node.style.font_size_pt;
-    let lh = line_height_mm(fs, node.style.line_height);
+    let cell_padding = 1.5;
+    let resolved = state.fm.resolve(&node.style.font_family, node.style.font_weight, node.style.font_style);
+    let lh = state.fm.metrics(&resolved).line_height_mm(node.style.font_size_pt, node.style.line_height);
 
     for (row_idx, row) in rows.iter().enumerate() {
         if state.current_y + lh + cell_padding * 2.0 > state.content_height_mm {
             state.new_page();
         }
-
         let is_hdr = is_header.get(row_idx).copied().unwrap_or(false);
-
         for (col_idx, cell_text) in row.iter().enumerate() {
             let x = col_idx as f64 * col_width + cell_padding;
             state.push_item(LayoutItem {
                 x_mm: x,
                 y_mm: state.current_y + cell_padding,
-                font_size_pt: fs,
+                font_size_pt: node.style.font_size_pt,
                 font_weight: if is_hdr { FontWeight::Bold } else { node.style.font_weight },
                 font_style: node.style.font_style,
                 font_family: node.style.font_family.clone(),
@@ -608,19 +835,13 @@ fn lay_out_table(node: &StyledNode, state: &mut LayoutState) {
                 kind: ItemKind::Text,
             });
         }
-
-        // Row separator
         state.current_y += lh + cell_padding * 2.0;
         if is_hdr || row_idx == rows.len() - 1 {
             state.push_item(LayoutItem {
-                x_mm: 0.0,
-                y_mm: state.current_y,
-                font_size_pt: 0.0,
-                font_weight: FontWeight::Normal,
-                font_style: FontStyle::Normal,
-                font_family: String::new(),
-                color: Color::BLACK,
-                text: String::new(),
+                x_mm: 0.0, y_mm: state.current_y,
+                font_size_pt: 0.0, font_weight: FontWeight::Normal,
+                font_style: FontStyle::Normal, font_family: String::new(),
+                color: Color::BLACK, text: String::new(),
                 kind: ItemKind::HorizontalRule {
                     width_mm: state.content_width_mm,
                     thickness_mm: if is_hdr { 0.3 } else { 0.15 },
@@ -630,7 +851,6 @@ fn lay_out_table(node: &StyledNode, state: &mut LayoutState) {
             state.current_y += 0.5;
         }
     }
-
     state.current_y += node.style.margin_bottom_mm;
 }
 
@@ -639,9 +859,7 @@ fn collect_table_row(tr: &StyledNode) -> (Vec<String>, bool) {
     let mut is_header = false;
     for child in &tr.children {
         if let StyledContent::Element(td) = child {
-            if td.tag == "th" {
-                is_header = true;
-            }
+            if td.tag == "th" { is_header = true; }
             cells.push(collect_text_content(td).trim().to_string());
         }
     }
