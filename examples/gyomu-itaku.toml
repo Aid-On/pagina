@@ -1,34 +1,34 @@
 [document]
 title = "Gyomu Itaku Keiyakusho"
-date = "2026-05-20"
+date = "2026-nen 5-gatsu 20-nichi"
 
-[parties.A]
-name = "Example Kabushikigaisha"
-address = "Tokyo-to Shibuya-ku 1-2-3"
-representative = "Daihyo Torishimariyaku Sato Ichiro"
+[parties.KOU]
+name = "Kabushikigaisha Example"
+address = "Tokyo-to Shibuya-ku Shibuya 1-2-3"
+representative = "Daihyou Torishimariyaku Satou Ichirou"
 
-[parties.B]
-name = "Yamada Taro"
-address = "Tokyo-to Shinjuku-ku 4-5-6"
+[parties.OTSU]
+name = "Yamada Tarou"
+address = "Tokyo-to Shinjuku-ku Shinjuku 4-5-6"
 
 [[clauses]]
 title = "Mokuteki"
-body = "<p>A wa B ni taishi, ika no gyomu wo itaku shi, B wa kore wo jutaku suru.</p><p>Gyomu naiyou: Software kaihatsu gyomu</p>"
+body = "<p>KOU wa OTSU ni taishi, ika no gyoumu wo itaku shi, OTSU wa kore wo jutaku suru.</p><p>Gyoumu naiyou: Software kaihatsu gyoumu</p>"
 
 [[clauses]]
 title = "Keiyaku kikan"
 body = "<p>Hon keiyaku no yuukou kikan wa, 2026-nen 6-gatsu 1-nichi kara 2027-nen 5-gatsu 31-nichi made to suru.</p>"
 
 [[clauses]]
-title = "Houshu"
-body = "<p>A wa B ni taishi, hon gyomu no taika to shite ika no houshu wo shiharau.</p><ul><li>Houshu-gaku: 500,000 en (zeibetsu)</li><li>Shiharai kijitsu: Yokugetsu matsujitsu</li></ul>"
+title = "Houshuu"
+body = "<p>KOU wa OTSU ni taishi, hon gyoumu no taika toshite ika no houshuu wo shiharau.</p><ul><li>Houshuu-gaku: 500,000-en (zeibetsu)</li><li>Shiharai kijitsu: Yokugetsu matsujitsu</li></ul>"
 
 [[clauses]]
 title = "Himitsu hoji"
 template = "confidentiality"
 
 [[clauses]]
-title = "Chiteki zaisan"
+title = "Chiteki zaisan kenri"
 template = "ip-rights"
 
 [[clauses]]
@@ -36,7 +36,7 @@ title = "Kaijo"
 template = "termination"
 
 [[clauses]]
-title = "Songai baishou"
+title = "Songai baishoo"
 template = "damages"
 
 [[clauses]]

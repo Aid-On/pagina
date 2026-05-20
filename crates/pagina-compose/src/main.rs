@@ -217,31 +217,55 @@ fn replace_params(
 }
 
 fn build_signature(def: &DocumentDef, sig: &SignatureDef) -> String {
-    let mut html = String::from("<div class=\"signature-area\">\n");
-    html.push_str("<p class=\"closing-text\">以上、本契約の成立を証するため、本書を作成し、各自署名（記名）捺印の上、各1通を保有する。</p>\n");
+    let num_parties = def.parties.len();
+    let mut html = String::from("<div class=\"sig-area\">\n");
+
+    html.push_str(&format!(
+        "<p class=\"sig-closing\">以上、本契約の成立を証するため、本書{}通を作成し、各自記名押印の上、各1通を保有する。</p>\n",
+        num_parties
+    ));
 
     if !def.document.date.is_empty() {
-        html.push_str(&format!("<p class=\"contract-date\">{}</p>\n", def.document.date));
+        html.push_str(&format!("<p class=\"sig-date\">{}</p>\n", def.document.date));
     }
 
-    html.push_str("<hr>\n");
-
     for (role, party) in &def.parties {
-        html.push_str("<div class=\"sig-block\">\n");
-        html.push_str(&format!("<p class=\"sig-label\">{}</p>\n", role));
+        html.push_str("<div class=\"sig-party\">\n");
+
+        // Role + Address line
         if !party.address.is_empty() {
-            html.push_str(&format!("<p class=\"sig-field\"><span class=\"sig-key\">Address:</span> {}</p>\n", party.address));
-        }
-        html.push_str(&format!("<p class=\"sig-field\"><span class=\"sig-key\">Name:</span> {}</p>\n", party.name));
-        if !party.representative.is_empty() {
-            html.push_str(&format!("<p class=\"sig-field\"><span class=\"sig-key\">Representative:</span> {}</p>\n", party.representative));
-        }
-        if sig.style == "seal" {
-            html.push_str("<p class=\"sig-seal-line\"><span class=\"sig-key\">Seal:</span></p>\n");
-            html.push_str("<div class=\"sig-seal-box\">SEAL</div>\n");
+            html.push_str(&format!(
+                "<p class=\"sig-line\"><span class=\"sig-role\">{}</span><span class=\"sig-lbl\">住所</span>{}</p>\n",
+                role, party.address
+            ));
         } else {
-            html.push_str("<p class=\"sig-sign-line\">Signature: ________________________________________</p>\n");
+            html.push_str(&format!(
+                "<p class=\"sig-line\"><span class=\"sig-role\">{}</span></p>\n",
+                role
+            ));
         }
+
+        // Name line with seal
+        if sig.style == "seal" {
+            html.push_str(&format!(
+                "<p class=\"sig-line\"><span class=\"sig-spacer\"></span><span class=\"sig-lbl\">氏名</span>{}<span class=\"sig-seal\">印</span></p>\n",
+                party.name
+            ));
+        } else {
+            html.push_str(&format!(
+                "<p class=\"sig-line\"><span class=\"sig-spacer\"></span><span class=\"sig-lbl\">氏名</span>{}</p>\n",
+                party.name
+            ));
+        }
+
+        // Representative line (if company)
+        if !party.representative.is_empty() {
+            html.push_str(&format!(
+                "<p class=\"sig-line\"><span class=\"sig-spacer\"></span><span class=\"sig-lbl\">代表者</span>{}</p>\n",
+                party.representative
+            ));
+        }
+
         html.push_str("</div>\n");
     }
 
@@ -287,54 +311,15 @@ h1 {
 .clause p { margin-bottom: 2mm; }
 .clause ol, .clause ul { margin-bottom: 2mm; }
 
-.signature-area {
-    break-before: page;
-    margin-top: 10mm;
-}
-.closing-text {
-    margin-bottom: 8mm;
-    font-size: 10pt;
-}
-.contract-date {
-    text-align: right;
-    margin-bottom: 10mm;
-    font-size: 10.5pt;
-}
-.sig-block {
-    margin-bottom: 18mm;
-    padding-bottom: 3mm;
-}
-.sig-label {
-    font-size: 9pt;
-    font-weight: bold;
-    color: #555;
-    margin-bottom: 4mm;
-    border-bottom: 0.5pt solid #999;
-}
-.sig-field {
-    font-size: 10.5pt;
-    margin-bottom: 2mm;
-}
-.sig-key {
-    font-size: 9pt;
-    color: #666;
-}
-.sig-seal-line {
-    margin-top: 6mm;
-    font-size: 10pt;
-}
-.sig-seal-box {
-    text-align: right;
-    font-size: 11pt;
-    color: #b22;
-    margin-top: 3mm;
-    border-bottom: 0.3pt solid #ccc;
-}
-.sig-sign-line {
-    margin-top: 10mm;
-    font-size: 10.5pt;
-    border-bottom: 0.3pt solid #ccc;
-}
+.sig-area { break-before: page; }
+.sig-closing { margin-bottom: 12mm; font-size: 10.5pt; }
+.sig-date { text-align: right; margin-bottom: 15mm; font-size: 10.5pt; }
+.sig-party { margin-bottom: 12mm; }
+.sig-line { margin-bottom: 1.5mm; font-size: 10.5pt; }
+.sig-role { font-weight: bold; margin-bottom: 0mm; }
+.sig-spacer { display: inline; }
+.sig-lbl { font-size: 9pt; color: #555; margin-bottom: 0mm; }
+.sig-seal { color: #c00; font-size: 10pt; }
 "#
 }
 
