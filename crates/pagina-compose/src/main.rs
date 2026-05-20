@@ -218,26 +218,29 @@ fn replace_params(
 
 fn build_signature(def: &DocumentDef, sig: &SignatureDef) -> String {
     let mut html = String::from("<div class=\"signature-area\">\n");
-    html.push_str("<p class=\"signature-date\">以上、本契約の成立を証するため、本書を作成し、各自署名（記名）捺印の上、各1通を保有する。</p>\n");
+    html.push_str("<p class=\"closing-text\">以上、本契約の成立を証するため、本書を作成し、各自署名（記名）捺印の上、各1通を保有する。</p>\n");
 
     if !def.document.date.is_empty() {
-        html.push_str(&format!("<p class=\"signature-date\">{}</p>\n", def.document.date));
+        html.push_str(&format!("<p class=\"contract-date\">{}</p>\n", def.document.date));
     }
 
+    html.push_str("<hr>\n");
+
     for (role, party) in &def.parties {
-        html.push_str("<div class=\"signature-block\">\n");
-        html.push_str(&format!("<p class=\"signature-role\">{}</p>\n", role));
+        html.push_str("<div class=\"sig-block\">\n");
+        html.push_str(&format!("<p class=\"sig-label\">{}</p>\n", role));
         if !party.address.is_empty() {
-            html.push_str(&format!("<p>{}</p>\n", party.address));
+            html.push_str(&format!("<p class=\"sig-field\"><span class=\"sig-key\">Address:</span> {}</p>\n", party.address));
         }
-        html.push_str(&format!("<p>{}</p>\n", party.name));
+        html.push_str(&format!("<p class=\"sig-field\"><span class=\"sig-key\">Name:</span> {}</p>\n", party.name));
         if !party.representative.is_empty() {
-            html.push_str(&format!("<p>{}</p>\n", party.representative));
+            html.push_str(&format!("<p class=\"sig-field\"><span class=\"sig-key\">Representative:</span> {}</p>\n", party.representative));
         }
         if sig.style == "seal" {
-            html.push_str("<div class=\"seal-area\">[印]</div>\n");
+            html.push_str("<p class=\"sig-seal-line\"><span class=\"sig-key\">Seal:</span></p>\n");
+            html.push_str("<div class=\"sig-seal-box\">SEAL</div>\n");
         } else {
-            html.push_str("<div class=\"sign-area\">署名: _______________</div>\n");
+            html.push_str("<p class=\"sig-sign-line\">Signature: ________________________________________</p>\n");
         }
         html.push_str("</div>\n");
     }
@@ -286,19 +289,51 @@ h1 {
 
 .signature-area {
     break-before: page;
-    margin-top: 15mm;
+    margin-top: 10mm;
 }
-.signature-date { margin-bottom: 10mm; }
-.signature-block { margin-bottom: 15mm; }
-.signature-role { font-weight: bold; margin-bottom: 3mm; }
-.seal-area {
+.closing-text {
+    margin-bottom: 8mm;
+    font-size: 10pt;
+}
+.contract-date {
     text-align: right;
-    margin-top: 5mm;
-    font-size: 14pt;
-    color: #c00;
+    margin-bottom: 10mm;
+    font-size: 10.5pt;
 }
-.sign-area {
-    margin-top: 8mm;
+.sig-block {
+    margin-bottom: 18mm;
+    padding-bottom: 3mm;
+}
+.sig-label {
+    font-size: 9pt;
+    font-weight: bold;
+    color: #555;
+    margin-bottom: 4mm;
+    border-bottom: 0.5pt solid #999;
+}
+.sig-field {
+    font-size: 10.5pt;
+    margin-bottom: 2mm;
+}
+.sig-key {
+    font-size: 9pt;
+    color: #666;
+}
+.sig-seal-line {
+    margin-top: 6mm;
+    font-size: 10pt;
+}
+.sig-seal-box {
+    text-align: right;
+    font-size: 11pt;
+    color: #b22;
+    margin-top: 3mm;
+    border-bottom: 0.3pt solid #ccc;
+}
+.sig-sign-line {
+    margin-top: 10mm;
+    font-size: 10.5pt;
+    border-bottom: 0.3pt solid #ccc;
 }
 "#
 }
