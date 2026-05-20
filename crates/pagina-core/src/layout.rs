@@ -372,7 +372,7 @@ fn lay_out_node(node: &StyledNode, state: &mut LayoutState, is_first_block: bool
                     let prefix = if node.tag == "ol" {
                         format!("{}. ", counter)
                     } else {
-                        "\u{2022} ".to_string() // bullet
+                        "- ".to_string()
                     };
                     lay_out_list_item(li, &prefix, state);
                 }
