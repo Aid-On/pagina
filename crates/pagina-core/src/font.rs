@@ -201,6 +201,14 @@ impl FontManager {
         ResolvedFont::Builtin(resolve_builtin(weight, style, family))
     }
 
+    /// Resolve to the best available font (first external if any, else builtin).
+    pub fn resolve_default(&self, weight: FontWeight, style: FontStyle) -> ResolvedFont {
+        if !self.external_fonts.is_empty() {
+            return ResolvedFont::External(0);
+        }
+        ResolvedFont::Builtin(resolve_builtin(weight, style, "Helvetica"))
+    }
+
     /// Get metrics for a resolved font.
     pub fn metrics(&self, font: &ResolvedFont) -> &FontMetrics {
         match font {

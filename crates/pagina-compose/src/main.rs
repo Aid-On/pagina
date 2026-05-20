@@ -220,46 +220,29 @@ fn replace_params(
     result
 }
 
-fn build_signature(def: &DocumentDef, sig: &SignatureDef) -> String {
+fn build_signature(def: &DocumentDef, _sig: &SignatureDef) -> String {
     let num_parties = def.parties.len();
     let mut html = String::from("<div class=\"sig-area\">\n");
 
+    // Closing statement
     html.push_str(&format!(
-        "<p class=\"sig-closing\">以上、本契約の成立を証するため、本書{}通を作成し、各自記名押印の上、各1通を保有する。</p>\n",
+        "<p>以上のとおり合意が成立したので、本書面を{}通作成し、甲乙それぞれ1通を保持する。</p>\n",
         num_parties
     ));
 
+    // Date
     if !def.document.date.is_empty() {
         html.push_str(&format!("<p class=\"sig-date\">{}</p>\n", def.document.date));
     }
 
+    // Party labels on one line (甲　　　　　乙)
     let mut parties: Vec<(&String, &Party)> = def.parties.iter().collect();
     parties.sort_by(|(a, _), (b, _)| contract_party_order(a).cmp(&contract_party_order(b)));
 
-    for (role, party) in &parties {
-        // Each field is a separate <p> with no wrapper div
-        if !party.address.is_empty() {
-            html.push_str(&format!("<p><b>{}</b></p>\n", role));
-            html.push_str(&format!("<p>住所: {}</p>\n", party.address));
-        } else {
-            html.push_str(&format!("<p><b>{}</b></p>\n", role));
-        }
-
-        html.push_str(&format!("<p>氏名: {}</p>\n", party.name));
-
-        if !party.representative.is_empty() {
-            html.push_str(&format!("<p>代表者: {}</p>\n", party.representative));
-        }
-
-        if sig.style == "seal" {
-            html.push_str("<p style=\"text-align: right; color: #c00\">印</p>\n");
-        } else {
-            html.push_str("<p>署名: ________________________</p>\n");
-        }
-
-        // Spacer between parties
-        html.push_str("<p> </p>\n<p> </p>\n");
-    }
+    let labels: Vec<&str> = parties.iter().map(|(role, _)| role.as_str()).collect();
+    // Use fullwidth spaces for wide gap between party labels
+    let sep = "\u{3000}\u{3000}\u{3000}\u{3000}\u{3000}\u{3000}\u{3000}\u{3000}\u{3000}\u{3000}\u{3000}\u{3000}\u{3000}\u{3000}\u{3000}\u{3000}\u{3000}\u{3000}\u{3000}\u{3000}";
+    html.push_str(&format!("<p class=\"sig-parties\">{}</p>\n", labels.join(sep)));
 
     html.push_str("</div>\n");
     html
@@ -270,15 +253,10 @@ fn default_contract_css() -> &'static str {
 @page {
     size: A4;
     margin: 25mm 20mm 30mm 20mm;
-    @top-center {
-        content: string(doc-title);
-        font-size: 8pt;
-        color: #888;
-    }
-    @bottom-center {
+    @top-right {
         content: counter(page) " / " counter(pages);
         font-size: 8pt;
-        color: #888;
+        color: #999;
     }
 }
 @page :first {
@@ -303,9 +281,9 @@ h1 {
 .clause p { margin-bottom: 2mm; }
 .clause ol, .clause ul { margin-bottom: 2mm; }
 
-.sig-area { break-before: page; }
-.sig-closing { margin-bottom: 10mm; }
-.sig-date { text-align: right; margin-bottom: 15mm; }
+.sig-area { margin-top: 12mm; }
+.sig-date { margin-top: 8mm; }
+.sig-parties { margin-top: 8mm; }
 "#
 }
 

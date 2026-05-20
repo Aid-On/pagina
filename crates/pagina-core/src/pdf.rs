@@ -212,7 +212,8 @@ fn render_margin_boxes(
 }
 
 fn render_single_margin_box(ops: &mut Vec<Op>, ctx: &RenderContext, mb: &ResolvedMarginBox) {
-    let resolved = ctx.fm.resolve("Helvetica", FontWeight::Normal, FontStyle::Normal);
+    // Try to resolve with the document's default font (first external font if available)
+    let resolved = ctx.fm.resolve_default(FontWeight::Normal, FontStyle::Normal);
     let metrics = ctx.fm.metrics(&resolved);
     let text_width_mm = metrics.text_width_mm(&mb.text, mb.font_size_pt);
     let area_width = margin_box_area_width(ctx.style, &mb.position);
