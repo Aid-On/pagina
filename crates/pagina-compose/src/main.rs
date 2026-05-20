@@ -33,6 +33,8 @@ struct DocumentDef {
     #[serde(default)]
     clauses: Vec<ClauseDef>,
     #[serde(default)]
+    overrides: HashMap<String, HashMap<String, String>>,
+    #[serde(default)]
     signature: Option<SignatureDef>,
 }
 
@@ -43,6 +45,26 @@ struct DocumentMeta {
     date: String,
     #[serde(default = "default_style")]
     style: String,
+    #[serde(default)]
+    preset: String,
+}
+
+// ─── Preset schema ───────────────────────────────────
+
+#[derive(Deserialize)]
+struct PresetDef {
+    name: String,
+    #[serde(default)]
+    clauses: Vec<PresetClause>,
+}
+
+#[derive(Deserialize, Clone)]
+struct PresetClause {
+    title: String,
+    #[serde(default)]
+    template: String,
+    #[serde(default)]
+    defaults: HashMap<String, String>,
 }
 
 fn default_style() -> String {
@@ -58,7 +80,7 @@ struct Party {
     representative: String,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Clone)]
 struct ClauseDef {
     #[serde(default)]
     title: String,
@@ -85,31 +107,65 @@ fn default_sig_style() -> String {
 fn assemble_html(def: &DocumentDef, templates_dir: &Path) -> String {
     let mut html = String::new();
 
-    // Load CSS
     let css = load_style(&def.document.style, templates_dir);
 
     html.push_str("<!DOCTYPE html>\n<html>\n<head>\n<style>\n");
     html.push_str(&css);
     html.push_str("\n</style>\n</head>\n<body>\n");
 
-    // Header
     html.push_str(&build_header(def));
-
-    // Preamble
     html.push_str(&build_preamble(def));
 
-    // Clauses
-    for (i, clause) in def.clauses.iter().enumerate() {
+    // Resolve clauses: preset (with overrides) or inline
+    let clauses = resolve_clauses(def, templates_dir);
+    for (i, clause) in clauses.iter().enumerate() {
         html.push_str(&build_clause(clause, i + 1, templates_dir, &def.parties));
     }
 
-    // Signature
     if let Some(sig) = &def.signature {
         html.push_str(&build_signature(def, sig));
     }
 
     html.push_str("\n</body>\n</html>");
     html
+}
+
+fn resolve_clauses(def: &DocumentDef, templates_dir: &Path) -> Vec<ClauseDef> {
+    // If no preset, use inline clauses directly
+    if def.document.preset.is_empty() {
+        return def.clauses.clone();
+    }
+
+    // Load preset
+    let preset_path = templates_dir.join("presets").join(format!("{}.toml", def.document.preset));
+    let preset_text = match fs::read_to_string(&preset_path) {
+        Ok(t) => t,
+        Err(_) => return def.clauses.clone(),
+    };
+    let preset: PresetDef = match toml::from_str(&preset_text) {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("warning: failed to parse preset: {e}");
+            return def.clauses.clone();
+        }
+    };
+
+    // Build clauses from preset, applying user overrides
+    preset.clauses.iter().map(|pc| {
+        let mut params = pc.defaults.clone();
+        // Apply overrides for this clause template
+        if let Some(user_overrides) = def.overrides.get(&pc.template) {
+            for (k, v) in user_overrides {
+                params.insert(k.clone(), v.clone());
+            }
+        }
+        ClauseDef {
+            title: pc.title.clone(),
+            template: pc.template.clone(),
+            body: String::new(),
+            params,
+        }
+    }).collect()
 }
 
 fn load_style(style_name: &str, templates_dir: &Path) -> String {

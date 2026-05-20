@@ -1,0 +1,84 @@
+# 業務委託契約書プリセット
+# 各条項のテンプレートとデフォルトパラメータを定義。
+# ユーザーは parties + overrides だけ書けばよい。
+
+name = "業務委託契約書"
+
+[[clauses]]
+title = "委託業務"
+template = "purpose"
+[clauses.defaults]
+"業務内容" = "（業務内容を記載）"
+
+[[clauses]]
+title = "委託料"
+template = "payment"
+[clauses.defaults]
+"金額" = "（金額）"
+"支払日" = "翌月末日"
+
+[[clauses]]
+title = "業務実施形態"
+template = "work-style"
+[clauses.defaults]
+"業務形態" = "リモートワーク"
+"交通費" = "交通費等の支給は行わない"
+
+[[clauses]]
+title = "報告書等の提出"
+template = "reporting"
+[clauses.defaults]
+"報告頻度" = "週次進捗報告：毎週水曜日"
+"請求書提出" = "稼働報告書・請求書：翌月5日まで"
+
+[[clauses]]
+title = "業務遂行方法"
+template = "work-method"
+
+[[clauses]]
+title = "秘密保持"
+template = "confidentiality"
+[clauses.defaults]
+"秘密保持期間" = "3年間"
+
+[[clauses]]
+title = "費用負担"
+template = "expenses"
+
+[[clauses]]
+title = "知的財産権"
+template = "ip-rights"
+
+[[clauses]]
+title = "再委託の禁止"
+template = "no-subcontract"
+
+[[clauses]]
+title = "契約期間"
+template = "period"
+[clauses.defaults]
+"開始日" = "（開始日）"
+"終了日" = "（終了日）"
+"通知期間" = "7日前"
+
+[[clauses]]
+title = "解除"
+template = "termination"
+
+[[clauses]]
+title = "反社会的勢力の排除"
+template = "anti-social"
+
+[[clauses]]
+title = "損害賠償"
+template = "damages"
+
+[[clauses]]
+title = "管轄裁判所"
+template = "governing-law"
+[clauses.defaults]
+"管轄裁判所" = "東京地方裁判所"
+
+[[clauses]]
+title = "協議事項"
+template = "consultation"

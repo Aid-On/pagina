@@ -1,6 +1,10 @@
+# 業務委託契約書
+# プリセット「gyomu-itaku」の条項構成を使用し、パラメータを上書き
+
 [document]
 title = "業務委託契約書"
 date = "令和8年5月20日"
+preset = "gyomu-itaku"
 
 [parties."甲"]
 name = "株式会社Example"
@@ -11,44 +15,19 @@ representative = "代表取締役 佐藤一郎"
 name = "山田太郎"
 address = "東京都新宿区新宿四丁目5番6号"
 
-[[clauses]]
-title = "目的"
-template = "purpose"
-[clauses.params]
+# 条項パラメータの上書き（テンプレート名 → パラメータ）
+[overrides.purpose]
 "業務内容" = "ソフトウェア開発業務"
 
-[[clauses]]
-title = "契約期間"
-template = "period"
-[clauses.params]
+[overrides.payment]
+"金額" = "500,000"
+
+[overrides.period]
 "開始日" = "令和8年6月1日"
 "終了日" = "令和9年5月31日"
 
-[[clauses]]
-title = "報酬"
-template = "payment"
-[clauses.params]
-"金額" = "500,000"
-
-[[clauses]]
-title = "秘密保持"
-template = "confidentiality"
-
-[[clauses]]
-title = "知的財産権"
-template = "ip-rights"
-
-[[clauses]]
-title = "解除"
-template = "termination"
-
-[[clauses]]
-title = "損害賠償"
-template = "damages"
-
-[[clauses]]
-title = "準拠法及び管轄"
-template = "governing-law"
+[overrides.governing-law]
+"管轄裁判所" = "東京地方裁判所"
 
 [signature]
 style = "seal"
