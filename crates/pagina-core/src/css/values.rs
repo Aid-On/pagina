@@ -77,24 +77,8 @@ impl Color {
     }
 
     pub fn from_name(name: &str) -> Option<Self> {
-        Some(match name.to_ascii_lowercase().as_str() {
-            "black" => Self::BLACK,
-            "white" => Self::WHITE,
-            "red" => Self::rgb(255, 0, 0),
-            "green" => Self::rgb(0, 128, 0),
-            "blue" => Self::rgb(0, 0, 255),
-            "gray" | "grey" => Self::rgb(128, 128, 128),
-            "darkgray" | "darkgrey" => Self::rgb(169, 169, 169),
-            "lightgray" | "lightgrey" => Self::rgb(211, 211, 211),
-            "navy" => Self::rgb(0, 0, 128),
-            "maroon" => Self::rgb(128, 0, 0),
-            "orange" => Self::rgb(255, 165, 0),
-            "purple" => Self::rgb(128, 0, 128),
-            "teal" => Self::rgb(0, 128, 128),
-            "silver" => Self::rgb(192, 192, 192),
-            "transparent" => Self::TRANSPARENT,
-            _ => return None,
-        })
+        let lower = name.to_ascii_lowercase();
+        primary_color_name(&lower).or_else(|| secondary_color_name(&lower))
     }
 
     pub fn from_hex(hex: &str) -> Option<Self> {
@@ -116,6 +100,33 @@ impl Color {
         };
         Some(Self::rgb(r, g, b))
     }
+}
+
+fn primary_color_name(name: &str) -> Option<Color> {
+    Some(match name {
+        "black" => Color::BLACK,
+        "white" => Color::WHITE,
+        "red" => Color::rgb(255, 0, 0),
+        "green" => Color::rgb(0, 128, 0),
+        "blue" => Color::rgb(0, 0, 255),
+        "navy" => Color::rgb(0, 0, 128),
+        "transparent" => Color::TRANSPARENT,
+        _ => return None,
+    })
+}
+
+fn secondary_color_name(name: &str) -> Option<Color> {
+    Some(match name {
+        "gray" | "grey" => Color::rgb(128, 128, 128),
+        "darkgray" | "darkgrey" => Color::rgb(169, 169, 169),
+        "lightgray" | "lightgrey" => Color::rgb(211, 211, 211),
+        "maroon" => Color::rgb(128, 0, 0),
+        "orange" => Color::rgb(255, 165, 0),
+        "purple" => Color::rgb(128, 0, 128),
+        "teal" => Color::rgb(0, 128, 128),
+        "silver" => Color::rgb(192, 192, 192),
+        _ => return None,
+    })
 }
 
 impl Default for Color {
@@ -197,27 +208,38 @@ pub enum MarginBoxPosition {
     LeftTop,
 }
 
+fn margin_box_top_bottom(name: &str) -> Option<MarginBoxPosition> {
+    Some(match name {
+        "top-left-corner" => MarginBoxPosition::TopLeftCorner,
+        "top-left" => MarginBoxPosition::TopLeft,
+        "top-center" => MarginBoxPosition::TopCenter,
+        "top-right" => MarginBoxPosition::TopRight,
+        "top-right-corner" => MarginBoxPosition::TopRightCorner,
+        "bottom-right-corner" => MarginBoxPosition::BottomRightCorner,
+        "bottom-right" => MarginBoxPosition::BottomRight,
+        "bottom-center" => MarginBoxPosition::BottomCenter,
+        "bottom-left" => MarginBoxPosition::BottomLeft,
+        "bottom-left-corner" => MarginBoxPosition::BottomLeftCorner,
+        _ => return None,
+    })
+}
+
+fn margin_box_side(name: &str) -> Option<MarginBoxPosition> {
+    Some(match name {
+        "right-top" => MarginBoxPosition::RightTop,
+        "right-middle" => MarginBoxPosition::RightMiddle,
+        "right-bottom" => MarginBoxPosition::RightBottom,
+        "left-bottom" => MarginBoxPosition::LeftBottom,
+        "left-middle" => MarginBoxPosition::LeftMiddle,
+        "left-top" => MarginBoxPosition::LeftTop,
+        _ => return None,
+    })
+}
+
 impl MarginBoxPosition {
     pub fn from_name(name: &str) -> Option<Self> {
-        Some(match name.to_ascii_lowercase().as_str() {
-            "top-left-corner" => Self::TopLeftCorner,
-            "top-left" => Self::TopLeft,
-            "top-center" => Self::TopCenter,
-            "top-right" => Self::TopRight,
-            "top-right-corner" => Self::TopRightCorner,
-            "right-top" => Self::RightTop,
-            "right-middle" => Self::RightMiddle,
-            "right-bottom" => Self::RightBottom,
-            "bottom-right-corner" => Self::BottomRightCorner,
-            "bottom-right" => Self::BottomRight,
-            "bottom-center" => Self::BottomCenter,
-            "bottom-left" => Self::BottomLeft,
-            "bottom-left-corner" => Self::BottomLeftCorner,
-            "left-bottom" => Self::LeftBottom,
-            "left-middle" => Self::LeftMiddle,
-            "left-top" => Self::LeftTop,
-            _ => return None,
-        })
+        let lower = name.to_ascii_lowercase();
+        margin_box_top_bottom(&lower).or_else(|| margin_box_side(&lower))
     }
 
     pub fn is_top(&self) -> bool {

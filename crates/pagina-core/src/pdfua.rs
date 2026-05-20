@@ -89,14 +89,15 @@ pub enum StructureRole {
 impl StructureRole {
     fn pdf_name(&self) -> &[u8] {
         match self {
+            StructureRole::Heading(n) => heading_pdf_name(*n),
+            _ => self.non_heading_pdf_name(),
+        }
+    }
+
+    fn non_heading_pdf_name(&self) -> &[u8] {
+        match self {
             StructureRole::Document => b"Document",
             StructureRole::Part => b"Part",
-            StructureRole::Heading(1) => b"H1",
-            StructureRole::Heading(2) => b"H2",
-            StructureRole::Heading(3) => b"H3",
-            StructureRole::Heading(4) => b"H4",
-            StructureRole::Heading(5) => b"H5",
-            StructureRole::Heading(_) => b"H6",
             StructureRole::Paragraph => b"P",
             StructureRole::List => b"L",
             StructureRole::ListItem => b"LI",
@@ -108,7 +109,19 @@ impl StructureRole {
             StructureRole::BlockQuote => b"BlockQuote",
             StructureRole::Code => b"Code",
             StructureRole::Span => b"Span",
+            StructureRole::Heading(_) => unreachable!(),
         }
+    }
+}
+
+fn heading_pdf_name(level: u8) -> &'static [u8] {
+    match level {
+        1 => b"H1",
+        2 => b"H2",
+        3 => b"H3",
+        4 => b"H4",
+        5 => b"H5",
+        _ => b"H6",
     }
 }
 
@@ -129,57 +142,72 @@ pub fn build_structure(tree: &crate::style::StyledNode) -> Vec<DocStructureNode>
 }
 
 fn build_structure_recursive(node: &crate::style::StyledNode, out: &mut Vec<DocStructureNode>) {
-    let role = match node.tag.as_str() {
-        "h1" => Some(StructureRole::Heading(1)),
-        "h2" => Some(StructureRole::Heading(2)),
-        "h3" => Some(StructureRole::Heading(3)),
-        "h4" => Some(StructureRole::Heading(4)),
-        "h5" => Some(StructureRole::Heading(5)),
-        "h6" => Some(StructureRole::Heading(6)),
-        "p" => Some(StructureRole::Paragraph),
-        "ul" | "ol" => Some(StructureRole::List),
-        "li" => Some(StructureRole::ListItem),
-        "table" => Some(StructureRole::Table),
-        "tr" => Some(StructureRole::TableRow),
-        "th" => Some(StructureRole::TableHeader),
-        "td" => Some(StructureRole::TableData),
-        "blockquote" => Some(StructureRole::BlockQuote),
-        "pre" | "code" => Some(StructureRole::Code),
-        "img" => {
-            let alt = node.attrs.iter()
-                .find(|(k, _)| k == "alt")
-                .map(|(_, v)| v.clone());
-            out.push(DocStructureNode {
-                role: StructureRole::Figure,
-                alt_text: alt,
-                lang: None,
-                children: Vec::new(),
-            });
-            return;
-        }
-        "figure" => Some(StructureRole::Figure),
-        _ => None,
+    // Special case: img is a leaf with alt text
+    if node.tag == "img" {
+        build_img_structure(node, out);
+        return;
+    }
+
+    let Some(role) = tag_to_role(&node.tag) else {
+        // Container: recurse through children
+        recurse_children(node, out);
+        return;
     };
 
-    if let Some(role) = role {
-        let mut children = Vec::new();
-        for child in &node.children {
-            if let crate::style::StyledContent::Element(child_node) = child {
-                build_structure_recursive(child_node, &mut children);
-            }
-        }
-        out.push(DocStructureNode {
-            role,
-            alt_text: None,
-            lang: None,
-            children,
-        });
-    } else {
-        // Container: recurse
-        for child in &node.children {
-            if let crate::style::StyledContent::Element(child_node) = child {
-                build_structure_recursive(child_node, out);
-            }
+    let children = collect_child_structures(node);
+    out.push(DocStructureNode { role, alt_text: None, lang: None, children });
+}
+
+fn build_img_structure(node: &crate::style::StyledNode, out: &mut Vec<DocStructureNode>) {
+    let alt = node.attrs.iter()
+        .find(|(k, _)| k == "alt")
+        .map(|(_, v)| v.clone());
+    out.push(DocStructureNode {
+        role: StructureRole::Figure,
+        alt_text: alt,
+        lang: None,
+        children: Vec::new(),
+    });
+}
+
+fn tag_to_role(tag: &str) -> Option<StructureRole> {
+    heading_tag_to_role(tag).or_else(|| block_tag_to_role(tag))
+}
+
+fn heading_tag_to_role(tag: &str) -> Option<StructureRole> {
+    let level = match tag {
+        "h1" => 1, "h2" => 2, "h3" => 3, "h4" => 4, "h5" => 5, "h6" => 6,
+        _ => return None,
+    };
+    Some(StructureRole::Heading(level))
+}
+
+fn block_tag_to_role(tag: &str) -> Option<StructureRole> {
+    Some(match tag {
+        "p" => StructureRole::Paragraph,
+        "ul" | "ol" => StructureRole::List,
+        "li" => StructureRole::ListItem,
+        "table" => StructureRole::Table,
+        "tr" => StructureRole::TableRow,
+        "th" => StructureRole::TableHeader,
+        "td" => StructureRole::TableData,
+        "blockquote" => StructureRole::BlockQuote,
+        "pre" | "code" => StructureRole::Code,
+        "figure" => StructureRole::Figure,
+        _ => return None,
+    })
+}
+
+fn collect_child_structures(node: &crate::style::StyledNode) -> Vec<DocStructureNode> {
+    let mut children = Vec::new();
+    recurse_children(node, &mut children);
+    children
+}
+
+fn recurse_children(node: &crate::style::StyledNode, out: &mut Vec<DocStructureNode>) {
+    for child in &node.children {
+        if let crate::style::StyledContent::Element(child_node) = child {
+            build_structure_recursive(child_node, out);
         }
     }
 }

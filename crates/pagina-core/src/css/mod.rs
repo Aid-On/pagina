@@ -84,22 +84,26 @@ pub enum SimpleSelector {
 impl SimpleSelector {
     pub fn specificity(&self) -> (u16, u16, u16) {
         match self {
-            SimpleSelector::Universal => (0, 0, 0),
-            SimpleSelector::Type(_) => (0, 0, 1),
-            SimpleSelector::Class(_) => (0, 1, 0),
-            SimpleSelector::Id(_) => (1, 0, 0),
-            SimpleSelector::TypeAndClass(_, _) => (0, 1, 1),
+            Self::Universal => (0, 0, 0),
+            Self::Type(_) => (0, 0, 1),
+            Self::Class(_) => (0, 1, 0),
+            Self::Id(_) => (1, 0, 0),
+            Self::TypeAndClass(_, _) => (0, 1, 1),
         }
     }
 
     pub fn matches(&self, tag: &str, id: &Option<String>, classes: &[String]) -> bool {
         match self {
-            SimpleSelector::Universal => true,
-            SimpleSelector::Type(t) => t == tag,
-            SimpleSelector::Class(c) => classes.iter().any(|cl| cl == c),
-            SimpleSelector::Id(i) => id.as_deref() == Some(i.as_str()),
-            SimpleSelector::TypeAndClass(t, c) => t == tag && classes.iter().any(|cl| cl == c),
+            Self::Universal => true,
+            Self::Type(t) => t == tag,
+            Self::Class(c) => classes.iter().any(|cl| cl == c),
+            Self::Id(i) => id.as_deref() == Some(i.as_str()),
+            Self::TypeAndClass(t, c) => t == tag && classes.iter().any(|cl| cl == c),
         }
+    }
+
+    fn matches_ancestor(&self, anc: &AncestorInfo) -> bool {
+        self.matches(&anc.tag, &anc.id, &anc.classes)
     }
 }
 
@@ -128,21 +132,15 @@ impl Selector {
     }
 
     pub fn specificity(&self) -> (u16, u16, u16) {
-        let mut a = 0u16;
-        let mut b = 0u16;
-        let mut c = 0u16;
-        for (_, s) in &self.parts {
+        self.parts.iter().fold((0u16, 0u16, 0u16), |(a, b, c), (_, s)| {
             let (sa, sb, sc) = s.specificity();
-            a += sa;
-            b += sb;
-            c += sc;
-        }
-        (a, b, c)
+            (a + sa, b + sb, c + sc)
+        })
     }
 
     /// The subject (rightmost) simple selector.
     pub fn subject(&self) -> &SimpleSelector {
-        &self.parts.last().unwrap().1
+        &self.parts.last().expect("selector should have at least one part").1
     }
 
     /// Match this selector against an element with its ancestor chain.
@@ -168,42 +166,47 @@ impl Selector {
             return true;
         }
 
-        // Walk the ancestor chain for remaining parts (right-to-left)
+        self.match_ancestor_chain(ancestors)
+    }
+
+    fn match_ancestor_chain(&self, ancestors: &[AncestorInfo]) -> bool {
+        let n = self.parts.len();
         let mut ancestor_idx = 0;
+
         for part_idx in (0..n - 1).rev() {
             let (combinator, ref simple) = self.parts[part_idx];
-            match combinator {
-                Combinator::Child => {
-                    // Must match the immediate parent
-                    if ancestor_idx >= ancestors.len() {
-                        return false;
-                    }
-                    let anc = &ancestors[ancestor_idx];
-                    if !simple.matches(&anc.tag, &anc.id, &anc.classes) {
-                        return false;
-                    }
-                    ancestor_idx += 1;
-                }
-                Combinator::Descendant => {
-                    // Search up the ancestor chain for a match
-                    let mut found = false;
-                    while ancestor_idx < ancestors.len() {
-                        let anc = &ancestors[ancestor_idx];
-                        ancestor_idx += 1;
-                        if simple.matches(&anc.tag, &anc.id, &anc.classes) {
-                            found = true;
-                            break;
-                        }
-                    }
-                    if !found {
-                        return false;
-                    }
-                }
+            let matched = match combinator {
+                Combinator::Child => match_child(simple, ancestors, &mut ancestor_idx),
+                Combinator::Descendant => match_descendant(simple, ancestors, &mut ancestor_idx),
+            };
+            if !matched {
+                return false;
             }
         }
-
         true
     }
+}
+
+fn match_child(simple: &SimpleSelector, ancestors: &[AncestorInfo], idx: &mut usize) -> bool {
+    if *idx >= ancestors.len() {
+        return false;
+    }
+    let matched = simple.matches_ancestor(&ancestors[*idx]);
+    if matched {
+        *idx += 1;
+    }
+    matched
+}
+
+fn match_descendant(simple: &SimpleSelector, ancestors: &[AncestorInfo], idx: &mut usize) -> bool {
+    while *idx < ancestors.len() {
+        let anc = &ancestors[*idx];
+        *idx += 1;
+        if simple.matches_ancestor(anc) {
+            return true;
+        }
+    }
+    false
 }
 
 /// Info about an ancestor element, for selector matching.
@@ -254,31 +257,24 @@ impl PageStyleSet {
     pub fn for_page(&self, page_num: usize, total_pages: usize) -> PageStyle {
         let mut style = self.base.clone();
 
-        // Apply :first override
         if page_num == 1 {
-            if let Some(first) = &self.first {
-                for pos in &first.suppress_boxes {
-                    style.margin_boxes.remove(pos);
-                }
-                for (pos, mb) in &first.margin_boxes {
-                    style.margin_boxes.insert(*pos, mb.clone());
-                }
-            }
+            apply_override(&mut style, self.first.as_ref());
         }
 
-        // Apply :left / :right (even pages are left in a left-to-right book)
-        let is_left = page_num % 2 == 0;
-        let side = if is_left { &self.left } else { &self.right };
-        if let Some(s) = side {
-            for pos in &s.suppress_boxes {
-                style.margin_boxes.remove(pos);
-            }
-            for (pos, mb) in &s.margin_boxes {
-                style.margin_boxes.insert(*pos, mb.clone());
-            }
-        }
+        let side_override = if page_num % 2 == 0 { &self.left } else { &self.right };
+        apply_override(&mut style, side_override.as_ref());
 
         let _ = total_pages; // reserved for future use
         style
+    }
+}
+
+fn apply_override(style: &mut PageStyle, page_override: Option<&PageStyleOverride>) {
+    let Some(ovr) = page_override else { return };
+    for pos in &ovr.suppress_boxes {
+        style.margin_boxes.remove(pos);
+    }
+    for (pos, mb) in &ovr.margin_boxes {
+        style.margin_boxes.insert(*pos, mb.clone());
     }
 }

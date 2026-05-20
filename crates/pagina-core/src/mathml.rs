@@ -23,15 +23,14 @@ pub fn render_math(
     base_font_size: f64,
     fm: &FontManager,
 ) -> Vec<LayoutItem> {
-    let mut items = Vec::new();
-    let mut x = 0.0;
     let style = MathStyle {
         font_size: base_font_size,
         color: node.style.color,
         font_family: node.style.font_family.clone(),
     };
-    render_math_node(node, &mut items, &mut x, 0.0, &style, fm);
-    items
+    let mut ctx = MathContext { items: Vec::new(), x: 0.0, fm };
+    ctx.render_node(node, 0.0, &style);
+    ctx.items
 }
 
 /// Width of a <math> element in mm.
@@ -49,221 +48,169 @@ struct MathStyle {
     font_family: String,
 }
 
-fn render_math_node(
-    node: &StyledNode,
-    items: &mut Vec<LayoutItem>,
-    x: &mut f64,
-    y_offset: f64,
-    style: &MathStyle,
-    fm: &FontManager,
-) {
-    match node.tag.as_str() {
-        "math" | "mrow" => {
-            for child in &node.children {
-                match child {
-                    StyledContent::Element(child_node) => {
-                        render_math_node(child_node, items, x, y_offset, style, fm);
-                    }
-                    StyledContent::Text(text) => {
-                        let trimmed = text.trim();
-                        if !trimmed.is_empty() {
-                            emit_math_text(items, x, y_offset, trimmed, style, fm);
-                        }
-                    }
-                }
-            }
+impl MathStyle {
+    fn scaled(&self, factor: f64) -> Self {
+        Self {
+            font_size: self.font_size * factor,
+            color: self.color,
+            font_family: self.font_family.clone(),
         }
-        "mi" => {
-            // Identifier: render in italic
-            let text = collect_math_text(node);
-            let italic_style = MathStyle {
-                font_size: style.font_size,
-                color: style.color,
-                font_family: style.font_family.clone(),
-            };
-            items.push(LayoutItem {
-                x_mm: *x,
-                y_mm: y_offset,
-                font_size_pt: italic_style.font_size,
-                font_weight: FontWeight::Normal,
-                font_style: FontStyle::Italic,
-                font_family: italic_style.font_family.clone(),
-                color: italic_style.color,
-                text: text.clone(),
-                kind: ItemKind::Text,
-            });
-            let w = fm.measure_text(&text, &style.font_family, FontWeight::Normal, FontStyle::Italic, style.font_size);
-            *x += w;
+    }
+
+    fn line_height_mm(&self) -> f64 {
+        self.font_size * 25.4 / 72.0
+    }
+}
+
+struct MathContext<'a> {
+    items: Vec<LayoutItem>,
+    x: f64,
+    fm: &'a FontManager,
+}
+
+impl<'a> MathContext<'a> {
+    fn render_node(&mut self, node: &StyledNode, y_offset: f64, style: &MathStyle) {
+        match node.tag.as_str() {
+            "math" | "mrow" => self.render_children(node, y_offset, style),
+            "mi" => self.render_mi(node, y_offset, style),
+            "mn" | "mo" => self.render_mn_mo(node, y_offset, style),
+            "mfrac" => self.render_mfrac(node, y_offset, style),
+            "msup" => self.render_msup(node, y_offset, style),
+            "msub" => self.render_msub(node, y_offset, style),
+            "msqrt" => self.render_msqrt(node, y_offset, style),
+            _ => self.render_children(node, y_offset, style),
         }
-        "mn" | "mo" => {
-            let text = collect_math_text(node);
-            emit_math_text(items, x, y_offset, &text, style, fm);
+    }
+
+    fn render_children(&mut self, node: &StyledNode, y_offset: f64, style: &MathStyle) {
+        for child in &node.children {
+            self.render_content(child, y_offset, style);
         }
-        "mfrac" => {
-            // Fraction: numerator over denominator with a line
-            let children: Vec<&StyledNode> = node.children.iter().filter_map(|c| {
-                if let StyledContent::Element(n) = c { Some(n) } else { None }
-            }).collect();
+    }
 
-            if children.len() >= 2 {
-                let small_style = MathStyle {
-                    font_size: style.font_size * 0.75,
-                    color: style.color,
-                    font_family: style.font_family.clone(),
-                };
-
-                // Measure numerator and denominator
-                let num_text = collect_all_text(children[0]);
-                let den_text = collect_all_text(children[1]);
-                let num_w = fm.measure_text(&num_text, &style.font_family, FontWeight::Normal, FontStyle::Normal, small_style.font_size);
-                let den_w = fm.measure_text(&den_text, &style.font_family, FontWeight::Normal, FontStyle::Normal, small_style.font_size);
-                let frac_w = num_w.max(den_w) + 1.0; // padding
-
-                let frac_x = *x;
-                let lh = style.font_size * 25.4 / 72.0;
-
-                // Numerator (above the line)
-                let num_x = frac_x + (frac_w - num_w) / 2.0;
-                items.push(LayoutItem {
-                    x_mm: num_x, y_mm: y_offset - lh * 0.4,
-                    font_size_pt: small_style.font_size,
-                    font_weight: FontWeight::Normal, font_style: FontStyle::Normal,
-                    font_family: small_style.font_family.clone(),
-                    color: small_style.color, text: num_text,
-                    kind: ItemKind::Text,
-                });
-
-                // Fraction line
-                items.push(LayoutItem {
-                    x_mm: frac_x, y_mm: y_offset,
-                    font_size_pt: 0.0, font_weight: FontWeight::Normal,
-                    font_style: FontStyle::Normal, font_family: String::new(),
-                    color: style.color, text: String::new(),
-                    kind: ItemKind::HorizontalRule {
-                        width_mm: frac_w,
-                        thickness_mm: 0.15,
-                        color: style.color,
-                    },
-                });
-
-                // Denominator (below the line)
-                let den_x = frac_x + (frac_w - den_w) / 2.0;
-                items.push(LayoutItem {
-                    x_mm: den_x, y_mm: y_offset + lh * 0.45,
-                    font_size_pt: small_style.font_size,
-                    font_weight: FontWeight::Normal, font_style: FontStyle::Normal,
-                    font_family: small_style.font_family.clone(),
-                    color: small_style.color, text: den_text,
-                    kind: ItemKind::Text,
-                });
-
-                *x += frac_w + 0.5;
-            }
-        }
-        "msup" => {
-            // Base + superscript
-            let children: Vec<&StyledNode> = node.children.iter().filter_map(|c| {
-                if let StyledContent::Element(n) = c { Some(n) } else { None }
-            }).collect();
-
-            if children.len() >= 2 {
-                // Base
-                render_math_node(children[0], items, x, y_offset, style, fm);
-                // Superscript (smaller, raised)
-                let sup_style = MathStyle {
-                    font_size: style.font_size * 0.7,
-                    color: style.color,
-                    font_family: style.font_family.clone(),
-                };
-                let lh = style.font_size * 25.4 / 72.0;
-                render_math_node(children[1], items, x, y_offset - lh * 0.35, &sup_style, fm);
-            }
-        }
-        "msub" => {
-            let children: Vec<&StyledNode> = node.children.iter().filter_map(|c| {
-                if let StyledContent::Element(n) = c { Some(n) } else { None }
-            }).collect();
-
-            if children.len() >= 2 {
-                render_math_node(children[0], items, x, y_offset, style, fm);
-                let sub_style = MathStyle {
-                    font_size: style.font_size * 0.7,
-                    color: style.color,
-                    font_family: style.font_family.clone(),
-                };
-                let lh = style.font_size * 25.4 / 72.0;
-                render_math_node(children[1], items, x, y_offset + lh * 0.25, &sub_style, fm);
-            }
-        }
-        "msqrt" => {
-            // Square root: radical sign + content
-            emit_math_text(items, x, y_offset, "V/", style, fm); // simplified radical
-            // Overline over the content
-            let content_start = *x;
-            for child in &node.children {
-                match child {
-                    StyledContent::Element(n) => render_math_node(n, items, x, y_offset, style, fm),
-                    StyledContent::Text(t) => {
-                        let trimmed = t.trim();
-                        if !trimmed.is_empty() {
-                            emit_math_text(items, x, y_offset, trimmed, style, fm);
-                        }
-                    }
-                }
-            }
-            let content_end = *x;
-            // Top bar
-            let lh = style.font_size * 25.4 / 72.0;
-            items.push(LayoutItem {
-                x_mm: content_start, y_mm: y_offset - lh * 0.5,
-                font_size_pt: 0.0, font_weight: FontWeight::Normal,
-                font_style: FontStyle::Normal, font_family: String::new(),
-                color: style.color, text: String::new(),
-                kind: ItemKind::HorizontalRule {
-                    width_mm: content_end - content_start,
-                    thickness_mm: 0.15,
-                    color: style.color,
-                },
-            });
-        }
-        _ => {
-            // Unknown element: render children
-            for child in &node.children {
-                match child {
-                    StyledContent::Element(n) => render_math_node(n, items, x, y_offset, style, fm),
-                    StyledContent::Text(t) => {
-                        let trimmed = t.trim();
-                        if !trimmed.is_empty() {
-                            emit_math_text(items, x, y_offset, trimmed, style, fm);
-                        }
-                    }
+    fn render_content(&mut self, child: &StyledContent, y_offset: f64, style: &MathStyle) {
+        match child {
+            StyledContent::Element(child_node) => self.render_node(child_node, y_offset, style),
+            StyledContent::Text(text) => {
+                let trimmed = text.trim();
+                if !trimmed.is_empty() {
+                    self.emit_text(y_offset, trimmed, style);
                 }
             }
         }
     }
+
+    fn render_mi(&mut self, node: &StyledNode, y_offset: f64, style: &MathStyle) {
+        let text = collect_math_text(node);
+        self.items.push(LayoutItem {
+            x_mm: self.x,
+            y_mm: y_offset,
+            font_size_pt: style.font_size,
+            font_weight: FontWeight::Normal,
+            font_style: FontStyle::Italic,
+            font_family: style.font_family.clone(),
+            color: style.color,
+            text: text.clone(),
+            kind: ItemKind::Text,
+        });
+        let w = self.fm.measure_text(&text, &style.font_family, FontWeight::Normal, FontStyle::Italic, style.font_size);
+        self.x += w;
+    }
+
+    fn render_mn_mo(&mut self, node: &StyledNode, y_offset: f64, style: &MathStyle) {
+        let text = collect_math_text(node);
+        self.emit_text(y_offset, &text, style);
+    }
+
+    fn render_mfrac(&mut self, node: &StyledNode, y_offset: f64, style: &MathStyle) {
+        let children = element_children(node);
+        if children.len() < 2 {
+            return;
+        }
+
+        let small_style = style.scaled(0.75);
+        let num_text = collect_all_text(children[0]);
+        let den_text = collect_all_text(children[1]);
+        let num_w = self.fm.measure_text(&num_text, &style.font_family, FontWeight::Normal, FontStyle::Normal, small_style.font_size);
+        let den_w = self.fm.measure_text(&den_text, &style.font_family, FontWeight::Normal, FontStyle::Normal, small_style.font_size);
+        let frac_w = num_w.max(den_w) + 1.0;
+        let frac_x = self.x;
+        let lh = style.line_height_mm();
+
+        self.emit_centered(frac_x, frac_w, num_w, y_offset - lh * 0.4, &num_text, &small_style);
+        self.items.push(LayoutItem::hr_item(frac_x, y_offset, frac_w, 0.15, style.color));
+        self.emit_centered(frac_x, frac_w, den_w, y_offset + lh * 0.45, &den_text, &small_style);
+
+        self.x += frac_w + 0.5;
+    }
+
+    fn emit_centered(&mut self, container_x: f64, container_w: f64, text_w: f64, y: f64, text: &str, style: &MathStyle) {
+        let x = container_x + (container_w - text_w) / 2.0;
+        self.items.push(LayoutItem {
+            x_mm: x,
+            y_mm: y,
+            font_size_pt: style.font_size,
+            font_weight: FontWeight::Normal,
+            font_style: FontStyle::Normal,
+            font_family: style.font_family.clone(),
+            color: style.color,
+            text: text.to_string(),
+            kind: ItemKind::Text,
+        });
+    }
+
+    fn render_msup(&mut self, node: &StyledNode, y_offset: f64, style: &MathStyle) {
+        let children = element_children(node);
+        if children.len() < 2 {
+            return;
+        }
+        self.render_node(children[0], y_offset, style);
+        let sup_style = style.scaled(0.7);
+        let lh = style.line_height_mm();
+        self.render_node(children[1], y_offset - lh * 0.35, &sup_style);
+    }
+
+    fn render_msub(&mut self, node: &StyledNode, y_offset: f64, style: &MathStyle) {
+        let children = element_children(node);
+        if children.len() < 2 {
+            return;
+        }
+        self.render_node(children[0], y_offset, style);
+        let sub_style = style.scaled(0.7);
+        let lh = style.line_height_mm();
+        self.render_node(children[1], y_offset + lh * 0.25, &sub_style);
+    }
+
+    fn render_msqrt(&mut self, node: &StyledNode, y_offset: f64, style: &MathStyle) {
+        self.emit_text(y_offset, "V/", style);
+        let content_start = self.x;
+        self.render_children(node, y_offset, style);
+        let content_end = self.x;
+        let lh = style.line_height_mm();
+        self.items.push(LayoutItem::hr_item(content_start, y_offset - lh * 0.5, content_end - content_start, 0.15, style.color));
+    }
+
+    fn emit_text(&mut self, y_offset: f64, text: &str, style: &MathStyle) {
+        let w = self.fm.measure_text(text, &style.font_family, FontWeight::Normal, FontStyle::Normal, style.font_size);
+        self.items.push(LayoutItem {
+            x_mm: self.x,
+            y_mm: y_offset,
+            font_size_pt: style.font_size,
+            font_weight: FontWeight::Normal,
+            font_style: FontStyle::Normal,
+            font_family: style.font_family.clone(),
+            color: style.color,
+            text: text.to_string(),
+            kind: ItemKind::Text,
+        });
+        self.x += w;
+    }
 }
 
-fn emit_math_text(
-    items: &mut Vec<LayoutItem>,
-    x: &mut f64,
-    y_offset: f64,
-    text: &str,
-    style: &MathStyle,
-    fm: &FontManager,
-) {
-    let w = fm.measure_text(text, &style.font_family, FontWeight::Normal, FontStyle::Normal, style.font_size);
-    items.push(LayoutItem {
-        x_mm: *x,
-        y_mm: y_offset,
-        font_size_pt: style.font_size,
-        font_weight: FontWeight::Normal,
-        font_style: FontStyle::Normal,
-        font_family: style.font_family.clone(),
-        color: style.color,
-        text: text.to_string(),
-        kind: ItemKind::Text,
-    });
-    *x += w;
+fn element_children(node: &StyledNode) -> Vec<&StyledNode> {
+    node.children.iter().filter_map(|c| {
+        if let StyledContent::Element(n) = c { Some(n) } else { None }
+    }).collect()
 }
 
 fn collect_math_text(node: &StyledNode) -> String {

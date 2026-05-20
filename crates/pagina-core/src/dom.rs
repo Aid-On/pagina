@@ -17,23 +17,30 @@ pub fn extract_styles(handle: &Handle) -> Vec<String> {
 }
 
 fn collect_styles(handle: &Handle, out: &mut Vec<String>) {
-    if let NodeData::Element { ref name, .. } = handle.data {
-        if name.local.as_ref() == "style" {
-            let mut css = String::new();
-            for child in handle.children.borrow().iter() {
-                if let NodeData::Text { ref contents } = child.data {
-                    css.push_str(&contents.borrow());
-                }
-            }
-            if !css.is_empty() {
-                out.push(css);
-            }
-            return;
+    if is_element_with_tag(handle, "style") {
+        let css = collect_child_text(handle);
+        if !css.is_empty() {
+            out.push(css);
         }
+        return;
     }
     for child in handle.children.borrow().iter() {
         collect_styles(child, out);
     }
+}
+
+fn is_element_with_tag(handle: &Handle, tag: &str) -> bool {
+    matches!(&handle.data, NodeData::Element { name, .. } if name.local.as_ref() == tag)
+}
+
+fn collect_child_text(handle: &Handle) -> String {
+    let mut text = String::new();
+    for child in handle.children.borrow().iter() {
+        if let NodeData::Text { ref contents } = child.data {
+            text.push_str(&contents.borrow());
+        }
+    }
+    text
 }
 
 #[derive(Debug)]

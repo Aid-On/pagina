@@ -36,23 +36,30 @@ fn extract_scripts(handle: &Handle) -> Vec<String> {
 }
 
 fn collect_scripts(handle: &Handle, scripts: &mut Vec<String>) {
-    if let NodeData::Element { name, .. } = &handle.data {
-        if name.local.as_ref() == "script" {
-            let mut js = String::new();
-            for child in handle.children.borrow().iter() {
-                if let NodeData::Text { contents } = &child.data {
-                    js.push_str(&contents.borrow());
-                }
-            }
-            if !js.is_empty() {
-                scripts.push(js);
-            }
-            return;
+    if is_script_element(handle) {
+        let js = extract_element_text(handle);
+        if !js.is_empty() {
+            scripts.push(js);
         }
+        return;
     }
     for child in handle.children.borrow().iter() {
         collect_scripts(child, scripts);
     }
+}
+
+fn is_script_element(handle: &Handle) -> bool {
+    matches!(&handle.data, NodeData::Element { name, .. } if name.local.as_ref() == "script")
+}
+
+fn extract_element_text(handle: &Handle) -> String {
+    let mut text = String::new();
+    for child in handle.children.borrow().iter() {
+        if let NodeData::Text { contents } = &child.data {
+            text.push_str(&contents.borrow());
+        }
+    }
+    text
 }
 
 fn register_document_api(context: &mut Context, _writes: &mut Vec<String>) {
@@ -82,15 +89,14 @@ fn register_document_api(context: &mut Context, _writes: &mut Vec<String>) {
 
 /// After executing scripts, extract any `document.write()` output.
 pub fn extract_document_writes(context: &mut Context) -> Vec<String> {
-    let result = context.eval(Source::from_bytes(b"JSON.stringify(document._writes)"));
-    match result {
-        Ok(val) => {
-            let s = val.to_string(context).ok().map(|js| js.to_std_string_escaped()).unwrap_or_default();
-            // Parse JSON array
-            parse_json_string_array(&s)
-        }
-        Err(_) => Vec::new(),
-    }
+    let Ok(val) = context.eval(Source::from_bytes(b"JSON.stringify(document._writes)")) else {
+        return Vec::new();
+    };
+    let s = val.to_string(context)
+        .ok()
+        .map(|js| js.to_std_string_escaped())
+        .unwrap_or_default();
+    parse_json_string_array(&s)
 }
 
 fn parse_json_string_array(s: &str) -> Vec<String> {
@@ -102,37 +108,55 @@ fn parse_json_string_array(s: &str) -> Vec<String> {
     if inner.is_empty() {
         return Vec::new();
     }
-    // Simple JSON string array parser
+    tokenize_json_strings(inner)
+}
+
+fn tokenize_json_strings(input: &str) -> Vec<String> {
     let mut items = Vec::new();
     let mut current = String::new();
     let mut in_string = false;
     let mut escape = false;
-    for ch in inner.chars() {
-        if escape {
-            current.push(ch);
-            escape = false;
-            continue;
-        }
-        if ch == '\\' && in_string {
-            escape = true;
-            continue;
-        }
-        if ch == '"' {
-            in_string = !in_string;
-            continue;
-        }
-        if ch == ',' && !in_string {
-            items.push(std::mem::take(&mut current));
-            continue;
-        }
-        if in_string {
-            current.push(ch);
+
+    for ch in input.chars() {
+        let action = classify_json_char(ch, in_string, escape);
+        match action {
+            JsonAction::Escape => { current.push(ch); escape = false; }
+            JsonAction::StartEscape => { escape = true; }
+            JsonAction::ToggleString => { in_string = !in_string; }
+            JsonAction::EndItem => { items.push(std::mem::take(&mut current)); }
+            JsonAction::Append => { current.push(ch); }
+            JsonAction::Skip => {}
         }
     }
     if !current.is_empty() {
         items.push(current);
     }
     items
+}
+
+enum JsonAction {
+    Escape,
+    StartEscape,
+    ToggleString,
+    EndItem,
+    Append,
+    Skip,
+}
+
+fn classify_json_char(ch: char, in_string: bool, escape: bool) -> JsonAction {
+    if escape {
+        return JsonAction::Escape;
+    }
+    if ch == '\\' && in_string {
+        return JsonAction::StartEscape;
+    }
+    if ch == '"' {
+        return JsonAction::ToggleString;
+    }
+    if ch == ',' && !in_string {
+        return JsonAction::EndItem;
+    }
+    if in_string { JsonAction::Append } else { JsonAction::Skip }
 }
 
 /// High-level: execute scripts and return generated HTML fragments.

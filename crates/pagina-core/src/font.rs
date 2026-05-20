@@ -45,13 +45,10 @@ fn parse_metrics(font_bytes: &[u8], font_index: u32) -> Option<FontMetrics> {
 
     // Pre-cache ASCII + Latin-1 Supplement
     for codepoint in (0x20u32..=0x7E).chain(0xA0u32..=0xFF) {
-        if let Some(ch) = char::from_u32(codepoint) {
-            if let Some(gid) = face.glyph_index(ch) {
-                if let Some(advance) = face.glyph_hor_advance(gid) {
-                    char_widths.insert(ch, advance);
-                }
-            }
-        }
+        let Some(ch) = char::from_u32(codepoint) else { continue };
+        let Some(gid) = face.glyph_index(ch) else { continue };
+        let Some(advance) = face.glyph_hor_advance(gid) else { continue };
+        char_widths.insert(ch, advance);
     }
 
     let default_width = char_widths.get(&' ').copied().unwrap_or(250);
@@ -71,13 +68,12 @@ fn cache_chars_for_text(metrics: &mut FontMetrics, font_bytes: &[u8], font_index
         return;
     };
     for ch in text.chars() {
-        if !metrics.char_widths.contains_key(&ch) {
-            if let Some(gid) = face.glyph_index(ch) {
-                if let Some(advance) = face.glyph_hor_advance(gid) {
-                    metrics.char_widths.insert(ch, advance);
-                }
-            }
+        if metrics.char_widths.contains_key(&ch) {
+            continue;
         }
+        let Some(gid) = face.glyph_index(ch) else { continue };
+        let Some(advance) = face.glyph_hor_advance(gid) else { continue };
+        metrics.char_widths.insert(ch, advance);
     }
 }
 
@@ -183,7 +179,8 @@ impl FontManager {
     /// Get metrics for a resolved font.
     pub fn metrics(&self, font: &ResolvedFont) -> &FontMetrics {
         match font {
-            ResolvedFont::Builtin(bf) => self.builtin_metrics.get(bf).unwrap(),
+            ResolvedFont::Builtin(bf) => self.builtin_metrics.get(bf)
+                .expect("builtin font should always have metrics"),
             ResolvedFont::External(i) => &self.external_fonts[*i].metrics,
         }
     }

@@ -13,36 +13,28 @@ pub fn parse_stylesheet(css: &str, page_styles: &mut PageStyleSet, rules: &mut V
     let mut parser = Parser::new(&mut input);
 
     loop {
-        let token_kind = {
-            match parser.next() {
-                Ok(token) => classify_token(token),
-                Err(_) => break,
-            }
+        let token_kind = match parser.next() {
+            Ok(token) => classify_token(token),
+            Err(_) => break,
         };
+        dispatch_stylesheet_token(token_kind, &mut parser, page_styles, rules);
+    }
+}
 
-        match token_kind {
-            TokenKind::AtPage => parse_at_page(&mut parser, page_styles),
-            TokenKind::CurlyBlock => {
-                // Stray block (e.g. from a qualified rule we couldn't parse) — skip
-                let _ = parser.parse_nested_block(
-                    |_| -> Result<(), ParseError<'_, ()>> { Ok(()) },
-                );
-            }
-            TokenKind::Ident(name) => {
-                // Start of a qualified rule (selector starts with ident)
-                try_parse_qualified_rule(&mut parser, &name, rules);
-            }
-            TokenKind::Hash(id) => {
-                try_parse_qualified_rule(&mut parser, &format!("#{id}"), rules);
-            }
-            TokenKind::Dot => {
-                // .classname selector
-                if let Ok(class) = parser.expect_ident().map(|s| s.as_ref().to_owned()) {
-                    try_parse_qualified_rule(&mut parser, &format!(".{class}"), rules);
-                }
-            }
-            _ => {}
+fn dispatch_stylesheet_token(kind: TokenKind, parser: &mut Parser, page_styles: &mut PageStyleSet, rules: &mut Vec<CssRule>) {
+    match kind {
+        TokenKind::AtPage => parse_at_page(parser, page_styles),
+        TokenKind::CurlyBlock => {
+            let _ = parser.parse_nested_block(|_| -> Result<(), ParseError<'_, ()>> { Ok(()) });
         }
+        TokenKind::Ident(name) => try_parse_qualified_rule(parser, &name, rules),
+        TokenKind::Hash(id) => try_parse_qualified_rule(parser, &format!("#{id}"), rules),
+        TokenKind::Dot => {
+            if let Ok(class) = parser.expect_ident().map(|s| s.as_ref().to_owned()) {
+                try_parse_qualified_rule(parser, &format!(".{class}"), rules);
+            }
+        }
+        _ => {}
     }
 }
 
@@ -132,38 +124,36 @@ fn parse_at_page(parser: &mut Parser, pss: &mut PageStyleSet) {
 
 fn parse_page_block(parser: &mut Parser, pss: &mut PageStyleSet, selector: Option<&str>) {
     while !parser.is_exhausted() {
-        // Check for nested at-rules (margin boxes)
-        let next_kind = {
-            match parser.next() {
-                Ok(t) => classify_page_block_token(t),
-                Err(_) => break,
-            }
+        let next_kind = match parser.next() {
+            Ok(t) => classify_page_block_token(t),
+            Err(_) => break,
         };
-
-        match next_kind {
-            PageBlockToken::AtRule(name) => {
-                if let Some(pos) = MarginBoxPosition::from_name(&name) {
-                    parse_margin_box_rule(parser, pss, selector, pos);
-                } else {
-                    skip_at_rule(parser);
-                }
-            }
-            PageBlockToken::Ident(name) => {
-                // Declaration
-                if parser.expect_colon().is_err() {
-                    continue;
-                }
-                let style = match selector {
-                    Some("first") | Some("left") | Some("right") => &mut pss.base,
-                    _ => &mut pss.base,
-                };
-                apply_page_declaration(&name, parser, style);
-                let _ = parser.try_parse(|p| p.expect_semicolon());
-            }
-            PageBlockToken::Semicolon => continue,
-            PageBlockToken::Other => continue,
-        }
+        handle_page_block_token(next_kind, parser, pss, selector);
     }
+}
+
+fn handle_page_block_token(token: PageBlockToken, parser: &mut Parser, pss: &mut PageStyleSet, selector: Option<&str>) {
+    match token {
+        PageBlockToken::AtRule(name) => handle_page_at_rule(&name, parser, pss, selector),
+        PageBlockToken::Ident(name) => handle_page_declaration(&name, parser, pss),
+        PageBlockToken::Semicolon | PageBlockToken::Other => {}
+    }
+}
+
+fn handle_page_at_rule(name: &str, parser: &mut Parser, pss: &mut PageStyleSet, selector: Option<&str>) {
+    if let Some(pos) = MarginBoxPosition::from_name(name) {
+        parse_margin_box_rule(parser, pss, selector, pos);
+    } else {
+        skip_at_rule(parser);
+    }
+}
+
+fn handle_page_declaration(name: &str, parser: &mut Parser, pss: &mut PageStyleSet) {
+    if parser.expect_colon().is_err() {
+        return;
+    }
+    apply_page_declaration(name, parser, &mut pss.base);
+    let _ = parser.try_parse(|p| p.expect_semicolon());
 }
 
 #[derive(Debug)]
@@ -187,27 +177,17 @@ fn apply_page_declaration(name: &str, parser: &mut Parser, style: &mut PageStyle
     match name {
         "size" => parse_size(parser, style),
         "margin" => parse_margin(parser, style),
-        "margin-top" => {
-            if let Some(v) = try_length_mm(parser) {
-                style.margin_top_mm = v;
-            }
-        }
-        "margin-right" => {
-            if let Some(v) = try_length_mm(parser) {
-                style.margin_right_mm = v;
-            }
-        }
-        "margin-bottom" => {
-            if let Some(v) = try_length_mm(parser) {
-                style.margin_bottom_mm = v;
-            }
-        }
-        "margin-left" => {
-            if let Some(v) = try_length_mm(parser) {
-                style.margin_left_mm = v;
-            }
-        }
+        "margin-top" => apply_page_margin_side(parser, &mut style.margin_top_mm),
+        "margin-right" => apply_page_margin_side(parser, &mut style.margin_right_mm),
+        "margin-bottom" => apply_page_margin_side(parser, &mut style.margin_bottom_mm),
+        "margin-left" => apply_page_margin_side(parser, &mut style.margin_left_mm),
         _ => skip_value(parser),
+    }
+}
+
+fn apply_page_margin_side(parser: &mut Parser, target: &mut f64) {
+    if let Some(v) = try_length_mm(parser) {
+        *target = v;
     }
 }
 
@@ -221,94 +201,97 @@ fn parse_margin_box_rule(
     page_selector: Option<&str>,
     pos: MarginBoxPosition,
 ) {
-    // Expect CurlyBracketBlock
-    let found = loop {
-        match parser.next() {
-            Ok(t) if matches!(t, Token::CurlyBracketBlock) => break true,
-            Ok(_) => continue,
-            Err(_) => break false,
-        }
-    };
-
-    if !found {
+    if !skip_to_curly_block(parser) {
         return;
     }
 
     let _ = parser.parse_nested_block(|block| -> Result<(), ParseError<'_, ()>> {
-        let decls = parse_declaration_list(block);
-
-        let mut content_items = Vec::new();
-        let mut font_size = None;
-        let mut color = None;
-        let mut text_align = None;
-        let mut is_none = false;
-
-        for decl in &decls {
-            match decl.property.as_str() {
-                "content" => {
-                    if decl.value.trim() == "none" {
-                        is_none = true;
-                    } else {
-                        content_items = parse_content_value(&decl.value);
-                    }
-                }
-                "font-size" => {
-                    font_size = parse_length_value(&decl.value).map(|l| l.to_pt(11.0));
-                }
-                "color" => {
-                    color = parse_color_value(&decl.value);
-                }
-                "text-align" => {
-                    text_align = parse_text_align_value(&decl.value);
-                }
-                _ => {}
-            }
-        }
-
-        let target = match page_selector {
-            Some("first") => {
-                if pss.first.is_none() {
-                    pss.first = Some(PageStyleOverride::default());
-                }
-                pss.first.as_mut().unwrap()
-            }
-            Some("left") => {
-                if pss.left.is_none() {
-                    pss.left = Some(PageStyleOverride::default());
-                }
-                pss.left.as_mut().unwrap()
-            }
-            Some("right") => {
-                if pss.right.is_none() {
-                    pss.right = Some(PageStyleOverride::default());
-                }
-                pss.right.as_mut().unwrap()
-            }
-            _ => {
-                // Base page: add directly to pss.base.margin_boxes
-                if is_none {
-                    pss.base.margin_boxes.remove(&pos);
-                } else if !content_items.is_empty() {
-                    pss.base.margin_boxes.insert(
-                        pos,
-                        MarginBox { content: content_items, font_size_pt: font_size, color, text_align },
-                    );
-                }
-                return Ok(());
-            }
-        };
-
-        if is_none {
-            target.suppress_boxes.push(pos);
-        } else if !content_items.is_empty() {
-            target.margin_boxes.insert(
-                pos,
-                MarginBox { content: content_items, font_size_pt: font_size, color, text_align },
-            );
-        }
-
+        let parsed = parse_margin_box_declarations(block);
+        apply_margin_box(pss, page_selector, pos, parsed);
         Ok(())
     });
+}
+
+fn skip_to_curly_block(parser: &mut Parser) -> bool {
+    loop {
+        match parser.next() {
+            Ok(t) if matches!(t, Token::CurlyBracketBlock) => return true,
+            Ok(_) => continue,
+            Err(_) => return false,
+        }
+    }
+}
+
+struct ParsedMarginBox {
+    content_items: Vec<ContentItem>,
+    font_size: Option<f64>,
+    color: Option<Color>,
+    text_align: Option<TextAlign>,
+    is_none: bool,
+}
+
+fn parse_margin_box_declarations(block: &mut Parser) -> ParsedMarginBox {
+    let decls = parse_declaration_list(block);
+    let mut result = ParsedMarginBox {
+        content_items: Vec::new(),
+        font_size: None,
+        color: None,
+        text_align: None,
+        is_none: false,
+    };
+
+    for decl in &decls {
+        match decl.property.as_str() {
+            "content" if decl.value.trim() == "none" => result.is_none = true,
+            "content" => result.content_items = parse_content_value(&decl.value),
+            "font-size" => result.font_size = parse_length_value(&decl.value).map(|l| l.to_pt(11.0)),
+            "color" => result.color = parse_color_value(&decl.value),
+            "text-align" => result.text_align = parse_text_align_value(&decl.value),
+            _ => {}
+        }
+    }
+    result
+}
+
+fn apply_margin_box(
+    pss: &mut PageStyleSet,
+    page_selector: Option<&str>,
+    pos: MarginBoxPosition,
+    parsed: ParsedMarginBox,
+) {
+    let mb = MarginBox {
+        content: parsed.content_items,
+        font_size_pt: parsed.font_size,
+        color: parsed.color,
+        text_align: parsed.text_align,
+    };
+
+    match page_selector {
+        Some("first") | Some("left") | Some("right") => {
+            let target = get_or_create_override(pss, page_selector.expect("matched above"));
+            if parsed.is_none {
+                target.suppress_boxes.push(pos);
+            } else if !mb.content.is_empty() {
+                target.margin_boxes.insert(pos, mb);
+            }
+        }
+        _ => {
+            if parsed.is_none {
+                pss.base.margin_boxes.remove(&pos);
+            } else if !mb.content.is_empty() {
+                pss.base.margin_boxes.insert(pos, mb);
+            }
+        }
+    }
+}
+
+fn get_or_create_override<'a>(pss: &'a mut PageStyleSet, selector: &str) -> &'a mut PageStyleOverride {
+    match selector {
+        "first" => pss.first.get_or_insert_with(PageStyleOverride::default),
+        "left" => pss.left.get_or_insert_with(PageStyleOverride::default),
+        "right" => pss.right.get_or_insert_with(PageStyleOverride::default),
+        _ => unreachable!("only called with first/left/right"),
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -381,27 +364,7 @@ fn parse_content_function(parser: &mut Parser, fname: &str) -> Option<ContentIte
 // ═══════════════════════════════════════════════════════════════
 
 fn try_parse_qualified_rule(parser: &mut Parser, first_token: &str, rules: &mut Vec<CssRule>) {
-    // Collect the rest of the selector text
-    let mut selector_text = first_token.to_owned();
-    loop {
-        match parser.next() {
-            Ok(Token::CurlyBracketBlock) => break,
-            Ok(Token::Ident(s)) => {
-                selector_text.push(' ');
-                selector_text.push_str(s.as_ref());
-            }
-            Ok(Token::Delim('.')) => selector_text.push('.'),
-            Ok(Token::IDHash(s)) => {
-                selector_text.push('#');
-                selector_text.push_str(s.as_ref());
-            }
-            Ok(Token::Comma) => selector_text.push(','),
-            Ok(Token::Colon) => selector_text.push(':'),
-            Ok(Token::WhiteSpace(_)) => selector_text.push(' '),
-            Err(_) => return,
-            _ => continue,
-        }
-    }
+    let Some(selector_text) = collect_selector_text(parser, first_token) else { return };
 
     let selectors = parse_selector_list(&selector_text);
     if selectors.is_empty() {
@@ -421,6 +384,30 @@ fn try_parse_qualified_rule(parser: &mut Parser, first_token: &str, rules: &mut 
     }
 }
 
+/// Collect selector text tokens until `{`. Returns None if parser exhausted.
+fn collect_selector_text(parser: &mut Parser, first_token: &str) -> Option<String> {
+    let mut text = first_token.to_owned();
+    loop {
+        match parser.next() {
+            Ok(Token::CurlyBracketBlock) => return Some(text),
+            Ok(ref token) => append_selector_token(&mut text, token),
+            Err(_) => return None,
+        }
+    }
+}
+
+fn append_selector_token(text: &mut String, token: &Token) {
+    match token {
+        Token::Ident(s) => { text.push(' '); text.push_str(s.as_ref()); }
+        Token::Delim('.') => text.push('.'),
+        Token::IDHash(s) => { text.push('#'); text.push_str(s.as_ref()); }
+        Token::Comma => text.push(','),
+        Token::Colon => text.push(':'),
+        Token::WhiteSpace(_) => text.push(' '),
+        _ => {}
+    }
+}
+
 fn parse_selector_list(text: &str) -> Vec<Selector> {
     text.split(',')
         .filter_map(|s| {
@@ -435,45 +422,51 @@ fn parse_selector_list(text: &str) -> Vec<Selector> {
 
 /// Parse a single compound selector (e.g. ".toc > a", "table td.highlight").
 fn parse_compound_selector(text: &str) -> Selector {
-    // Tokenize: split by whitespace and `>`, preserving `>` as a token
-    let mut tokens: Vec<&str> = Vec::new();
+    let tokens = tokenize_selector(text);
+    let parts = build_selector_parts(&tokens);
+
+    match parts.len() {
+        0 => Selector::simple(SimpleSelector::Universal),
+        1 => {
+            let (_, simple) = parts.into_iter().next().expect("len checked");
+            Selector::simple(simple)
+        }
+        _ => Selector { parts },
+    }
+}
+
+fn tokenize_selector(text: &str) -> Vec<&str> {
+    let mut tokens = Vec::new();
     let mut rest = text.trim();
     while !rest.is_empty() {
         rest = rest.trim_start();
         if rest.starts_with('>') {
             tokens.push(">");
             rest = &rest[1..];
-        } else {
-            let end = rest.find(|c: char| c.is_whitespace() || c == '>').unwrap_or(rest.len());
-            if end > 0 {
-                tokens.push(&rest[..end]);
-                rest = &rest[end..];
-            } else {
-                break;
-            }
+            continue;
         }
+        let end = rest.find(|c: char| c.is_whitespace() || c == '>').unwrap_or(rest.len());
+        if end == 0 {
+            break;
+        }
+        tokens.push(&rest[..end]);
+        rest = &rest[end..];
     }
+    tokens
+}
 
+fn build_selector_parts(tokens: &[&str]) -> Vec<(Combinator, SimpleSelector)> {
     let mut parts = Vec::new();
     let mut next_combinator = Combinator::Descendant;
-
-    for token in &tokens {
+    for token in tokens {
         if *token == ">" {
             next_combinator = Combinator::Child;
             continue;
         }
-        let simple = parse_simple_selector(token);
-        parts.push((next_combinator, simple));
+        parts.push((next_combinator, parse_simple_selector(token)));
         next_combinator = Combinator::Descendant;
     }
-
-    if parts.is_empty() {
-        Selector::simple(SimpleSelector::Universal)
-    } else if parts.len() == 1 {
-        Selector::simple(parts.pop().unwrap().1)
-    } else {
-        Selector { parts }
-    }
+    parts
 }
 
 fn parse_simple_selector(s: &str) -> SimpleSelector {
@@ -502,96 +495,125 @@ fn parse_simple_selector(s: &str) -> SimpleSelector {
 fn parse_declaration_list(parser: &mut Parser) -> Vec<Declaration> {
     let mut decls = Vec::new();
     while !parser.is_exhausted() {
-        let prop = match parser.expect_ident() {
-            Ok(name) => name.as_ref().to_ascii_lowercase(),
-            Err(_) => {
-                let _ = parser.next();
-                continue;
-            }
-        };
-
-        if parser.expect_colon().is_err() {
-            continue;
-        }
-
-        let mut value_parts = Vec::new();
-        loop {
-            match parser.next() {
-                Ok(Token::Semicolon) | Err(_) => break,
-                Ok(Token::Ident(s)) => value_parts.push(s.as_ref().to_string()),
-                Ok(Token::QuotedString(s)) => {
-                    value_parts.push(format!("\"{}\"", s.as_ref()));
-                }
-                Ok(Token::Number { value, .. }) => {
-                    value_parts.push(format!("{value}"));
-                }
-                Ok(Token::Percentage { unit_value, .. }) => {
-                    value_parts.push(format!("{}%", unit_value * 100.0));
-                }
-                Ok(Token::Dimension { value, unit, .. }) => {
-                    value_parts.push(format!("{value}{}", unit.as_ref()));
-                }
-                Ok(Token::Hash(s)) | Ok(Token::IDHash(s)) => {
-                    value_parts.push(format!("#{}", s.as_ref()));
-                }
-                Ok(Token::Function(name)) => {
-                    let fname = name.as_ref().to_string();
-                    let inner = parser
-                        .parse_nested_block(|block| -> Result<String, ParseError<'_, ()>> {
-                            let mut parts = Vec::new();
-                            while let Ok(t) = block.next() {
-                                match t {
-                                    Token::Ident(s) => parts.push(s.as_ref().to_string()),
-                                    Token::QuotedString(s) => {
-                                        parts.push(format!("\"{}\"", s.as_ref()))
-                                    }
-                                    Token::Number { value, .. } => {
-                                        parts.push(format!("{value}"))
-                                    }
-                                    Token::Comma => parts.push(",".to_string()),
-                                    Token::Dimension { value, unit, .. } => {
-                                        parts.push(format!("{value}{}", unit.as_ref()))
-                                    }
-                                    Token::Function(inner_name) => {
-                                        let inner_fname = inner_name.as_ref().to_string();
-                                        let inner_args = block
-                                            .parse_nested_block(
-                                                |ib| -> Result<String, ParseError<'_, ()>> {
-                                                    let mut ip = Vec::new();
-                                                    while let Ok(it) = ib.next() {
-                                                        match it {
-                                                            Token::Ident(s) => {
-                                                                ip.push(s.as_ref().to_string())
-                                                            }
-                                                            _ => {}
-                                                        }
-                                                    }
-                                                    Ok(ip.join(" "))
-                                                },
-                                            )
-                                            .unwrap_or_default();
-                                        parts.push(format!("{inner_fname}({inner_args})"));
-                                    }
-                                    _ => {}
-                                }
-                            }
-                            Ok(parts.join(" "))
-                        })
-                        .unwrap_or_default();
-                    value_parts.push(format!("{fname}({inner})"));
-                }
-                Ok(Token::Delim('/')) => value_parts.push("/".to_string()),
-                Ok(Token::Comma) => value_parts.push(",".to_string()),
-                _ => {}
-            }
-        }
-
-        let value = value_parts.join(" ").trim().to_string();
-        if !value.is_empty() {
-            decls.push(Declaration { property: prop, value });
+        if let Some(decl) = try_parse_declaration(parser) {
+            decls.push(decl);
         }
     }
     decls
+}
+
+fn try_parse_declaration(parser: &mut Parser) -> Option<Declaration> {
+    let prop = match parser.expect_ident() {
+        Ok(name) => name.as_ref().to_ascii_lowercase(),
+        Err(_) => {
+            let _ = parser.next();
+            return None;
+        }
+    };
+
+    if parser.expect_colon().is_err() {
+        return None;
+    }
+
+    let value_parts = collect_value_tokens(parser);
+    let value = value_parts.join(" ").trim().to_string();
+    if value.is_empty() {
+        return None;
+    }
+    Some(Declaration { property: prop, value })
+}
+
+fn collect_value_tokens(parser: &mut Parser) -> Vec<String> {
+    let mut parts = Vec::new();
+    loop {
+        match parser.next() {
+            Ok(Token::Semicolon) | Err(_) => break,
+            Ok(token) => {
+                if let Some(s) = value_token_to_string(&token) {
+                    parts.push(s);
+                } else if let Token::Function(name) = token {
+                    let fname = name.as_ref().to_string();
+                    let inner = parse_function_args(parser);
+                    parts.push(format!("{fname}({inner})"));
+                }
+            }
+        }
+    }
+    parts
+}
+
+fn value_token_to_string(token: &Token) -> Option<String> {
+    match token {
+        Token::Ident(s) => Some(s.as_ref().to_string()),
+        Token::QuotedString(s) => Some(format!("\"{}\"", s.as_ref())),
+        Token::Number { value, .. } => Some(format!("{value}")),
+        Token::Percentage { unit_value, .. } => Some(format!("{}%", unit_value * 100.0)),
+        Token::Dimension { value, unit, .. } => Some(format!("{value}{}", unit.as_ref())),
+        Token::Hash(s) | Token::IDHash(s) => Some(format!("#{}", s.as_ref())),
+        Token::Delim('/') => Some("/".to_string()),
+        Token::Comma => Some(",".to_string()),
+        _ => None,
+    }
+}
+
+fn parse_function_args(parser: &mut Parser) -> String {
+    parser
+        .parse_nested_block(|block| -> Result<String, ParseError<'_, ()>> {
+            Ok(collect_block_tokens(block))
+        })
+        .unwrap_or_default()
+}
+
+fn collect_block_tokens(block: &mut Parser) -> String {
+    let mut parts = Vec::new();
+    loop {
+        // Classify the token and extract owned data before doing anything else.
+        let classified = match block.next() {
+            Ok(token) => classify_value_token(token),
+            Err(_) => break,
+        };
+        match classified {
+            ValueToken::Simple(s) => parts.push(s),
+            ValueToken::NestedFunction(fname) => {
+                let inner_args = collect_inner_function_idents(block);
+                parts.push(format!("{fname}({inner_args})"));
+            }
+            ValueToken::Skip => {}
+        }
+    }
+    parts.join(" ")
+}
+
+enum ValueToken {
+    Simple(String),
+    NestedFunction(String),
+    Skip,
+}
+
+fn classify_value_token(token: &Token) -> ValueToken {
+    match token {
+        Token::Ident(s) => ValueToken::Simple(s.as_ref().to_string()),
+        Token::QuotedString(s) => ValueToken::Simple(format!("\"{}\"", s.as_ref())),
+        Token::Number { value, .. } => ValueToken::Simple(format!("{value}")),
+        Token::Comma => ValueToken::Simple(",".to_string()),
+        Token::Dimension { value, unit, .. } => ValueToken::Simple(format!("{value}{}", unit.as_ref())),
+        Token::Function(name) => ValueToken::NestedFunction(name.as_ref().to_string()),
+        _ => ValueToken::Skip,
+    }
+}
+
+fn collect_inner_function_idents(block: &mut Parser) -> String {
+    block
+        .parse_nested_block(|ib| -> Result<String, ParseError<'_, ()>> {
+            let mut ip = Vec::new();
+            while let Ok(it) = ib.next() {
+                if let Token::Ident(s) = it {
+                    ip.push(s.as_ref().to_string());
+                }
+            }
+            Ok(ip.join(" "))
+        })
+        .unwrap_or_default()
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -628,30 +650,41 @@ pub fn parse_color_value(s: &str) -> Option<Color> {
         return Color::from_hex(s);
     }
     if s.starts_with("rgb") {
-        // rgb(r, g, b) or rgba(r, g, b, a)
-        let inner = s.split_once('(')?.1.strip_suffix(')')?.trim();
-        let parts: Vec<&str> = inner.split([',', ' ']).filter(|p| !p.is_empty()).collect();
-        if parts.len() >= 3 {
-            let r = parts[0].trim().parse().ok()?;
-            let g = parts[1].trim().parse().ok()?;
-            let b = parts[2].trim().parse().ok()?;
-            let a = parts.get(3).and_then(|s| s.trim().parse().ok()).unwrap_or(1.0);
-            return Some(Color { r, g, b, a, cmyk: None });
-        }
+        return parse_rgb_color(s);
     }
-    // cmyk(c, m, y, k) or device-cmyk(c, m, y, k)
     if s.starts_with("cmyk") || s.starts_with("device-cmyk") {
-        let inner = s.split_once('(')?.1.strip_suffix(')')?.trim();
-        let parts: Vec<&str> = inner.split([',', ' ']).filter(|p| !p.is_empty()).collect();
-        if parts.len() >= 4 {
-            let c: f32 = parse_cmyk_component(parts[0])?;
-            let m: f32 = parse_cmyk_component(parts[1])?;
-            let y: f32 = parse_cmyk_component(parts[2])?;
-            let k: f32 = parse_cmyk_component(parts[3])?;
-            return Some(Color::cmyk(c, m, y, k));
-        }
+        return parse_cmyk_color(s);
     }
     Color::from_name(s)
+}
+
+fn extract_function_args(s: &str) -> Option<Vec<&str>> {
+    let inner = s.split_once('(')?.1.strip_suffix(')')?.trim();
+    Some(inner.split([',', ' ']).filter(|p| !p.is_empty()).collect())
+}
+
+fn parse_rgb_color(s: &str) -> Option<Color> {
+    let parts = extract_function_args(s)?;
+    if parts.len() < 3 {
+        return None;
+    }
+    let r = parts[0].trim().parse().ok()?;
+    let g = parts[1].trim().parse().ok()?;
+    let b = parts[2].trim().parse().ok()?;
+    let a = parts.get(3).and_then(|s| s.trim().parse().ok()).unwrap_or(1.0);
+    Some(Color { r, g, b, a, cmyk: None })
+}
+
+fn parse_cmyk_color(s: &str) -> Option<Color> {
+    let parts = extract_function_args(s)?;
+    if parts.len() < 4 {
+        return None;
+    }
+    let c = parse_cmyk_component(parts[0])?;
+    let m = parse_cmyk_component(parts[1])?;
+    let y = parse_cmyk_component(parts[2])?;
+    let k = parse_cmyk_component(parts[3])?;
+    Some(Color::cmyk(c, m, y, k))
 }
 
 fn parse_cmyk_component(s: &str) -> Option<f32> {
