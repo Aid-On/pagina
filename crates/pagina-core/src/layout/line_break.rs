@@ -334,3 +334,225 @@ fn is_cjk(ch: char) -> bool {
     // CJK Extension B+
     || (0x20000..=0x2A6DF).contains(&cp)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── is_cjk ──────────────────────────────────────────────────
+
+    #[test]
+    fn cjk_unified_ideograph() {
+        assert!(is_cjk('漢')); // U+6F22
+        assert!(is_cjk('字')); // U+5B57
+        assert!(is_cjk('一')); // U+4E00 (first in range)
+    }
+
+    #[test]
+    fn cjk_hiragana() {
+        assert!(is_cjk('あ')); // U+3042
+        assert!(is_cjk('ん')); // U+3093
+    }
+
+    #[test]
+    fn cjk_katakana() {
+        assert!(is_cjk('ア')); // U+30A2
+        assert!(is_cjk('ン')); // U+30F3
+    }
+
+    #[test]
+    fn cjk_fullwidth_forms() {
+        assert!(is_cjk('Ａ')); // U+FF21
+        assert!(is_cjk('０')); // U+FF10
+    }
+
+    #[test]
+    fn cjk_symbols_and_punctuation() {
+        assert!(is_cjk('〇')); // U+3007
+        assert!(is_cjk('\u{3000}')); // Ideographic space (U+3000)
+    }
+
+    #[test]
+    fn not_cjk_ascii() {
+        assert!(!is_cjk('A'));
+        assert!(!is_cjk('z'));
+        assert!(!is_cjk('0'));
+        assert!(!is_cjk(' '));
+    }
+
+    #[test]
+    fn not_cjk_latin_extended() {
+        assert!(!is_cjk('é'));
+        assert!(!is_cjk('ñ'));
+    }
+
+    // ── is_no_break_before (kinsoku) ────────────────────────────
+
+    #[test]
+    fn kinsoku_closing_brackets() {
+        assert!(is_no_break_before('）'));
+        assert!(is_no_break_before('」'));
+        assert!(is_no_break_before('』'));
+        assert!(is_no_break_before('】'));
+    }
+
+    #[test]
+    fn kinsoku_punctuation() {
+        assert!(is_no_break_before('。'));
+        assert!(is_no_break_before('、'));
+        assert!(is_no_break_before('！'));
+        assert!(is_no_break_before('？'));
+    }
+
+    #[test]
+    fn kinsoku_long_vowel_and_ellipsis() {
+        assert!(is_no_break_before('ー'));
+        assert!(is_no_break_before('…'));
+        assert!(is_no_break_before('‥'));
+    }
+
+    #[test]
+    fn not_kinsoku_ascii_punctuation() {
+        assert!(!is_no_break_before('.'));
+        assert!(!is_no_break_before(','));
+        assert!(!is_no_break_before('!'));
+        assert!(!is_no_break_before(')'));
+    }
+
+    #[test]
+    fn not_kinsoku_regular_chars() {
+        assert!(!is_no_break_before('A'));
+        assert!(!is_no_break_before('あ'));
+        assert!(!is_no_break_before('漢'));
+    }
+
+    // ── compute_align_offset ────────────────────────────────────
+
+    #[test]
+    fn align_left_zero_offset() {
+        let offset = compute_align_offset(TextAlign::Left, 100.0, 60.0);
+        assert_eq!(offset, 0.0);
+    }
+
+    #[test]
+    fn align_center_offset() {
+        let offset = compute_align_offset(TextAlign::Center, 100.0, 60.0);
+        assert!((offset - 20.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn align_right_offset() {
+        let offset = compute_align_offset(TextAlign::Right, 100.0, 60.0);
+        assert!((offset - 40.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn align_justify_zero_offset() {
+        let offset = compute_align_offset(TextAlign::Justify, 100.0, 60.0);
+        assert_eq!(offset, 0.0);
+    }
+
+    #[test]
+    fn align_offset_never_negative() {
+        // line_width > content_width should clamp to 0
+        let offset = compute_align_offset(TextAlign::Center, 50.0, 100.0);
+        assert_eq!(offset, 0.0);
+        let offset = compute_align_offset(TextAlign::Right, 50.0, 100.0);
+        assert_eq!(offset, 0.0);
+    }
+
+    // ── break_into_lines ────────────────────────────────────────
+
+    fn make_style() -> InlineStyle {
+        InlineStyle {
+            font_size_pt: 12.0,
+            font_weight: FontWeight::Normal,
+            font_style: FontStyle::Normal,
+            font_family: "Helvetica".to_string(),
+            color: Color::BLACK,
+        }
+    }
+
+    fn make_word(text: &str, width: f64) -> StyledWord {
+        StyledWord {
+            text: text.to_string(),
+            style: make_style(),
+            width_mm: width,
+        }
+    }
+
+    fn make_space(width: f64) -> StyledWord {
+        StyledWord {
+            text: " ".to_string(),
+            style: make_style(),
+            width_mm: width,
+        }
+    }
+
+    #[test]
+    fn break_empty_words_returns_empty() {
+        let lines = break_into_lines(&[], 100.0, 5.0);
+        assert!(lines.is_empty());
+    }
+
+    #[test]
+    fn break_single_word_fits_on_one_line() {
+        let words = vec![make_word("hello", 20.0)];
+        let lines = break_into_lines(&words, 100.0, 5.0);
+        assert_eq!(lines.len(), 1);
+        assert_eq!(lines[0].segments.len(), 1);
+        assert_eq!(lines[0].segments[0].text, "hello");
+    }
+
+    #[test]
+    fn break_wraps_at_max_width() {
+        // Three words of 40mm each, max width 100mm
+        // word1(40) + space(5) + word2(40) = 85 fits
+        // + space(5) + word3(40) = 130 doesn't fit -> wrap
+        let words = vec![
+            make_word("aaa", 40.0),
+            make_space(5.0),
+            make_word("bbb", 40.0),
+            make_space(5.0),
+            make_word("ccc", 40.0),
+        ];
+        let lines = break_into_lines(&words, 100.0, 5.0);
+        assert_eq!(lines.len(), 2);
+    }
+
+    #[test]
+    fn break_newline_forces_line_break() {
+        let words = vec![StyledWord {
+            text: "first\nsecond".to_string(),
+            style: make_style(),
+            width_mm: 30.0,
+        }];
+        let lines = break_into_lines(&words, 100.0, 5.0);
+        assert!(lines.len() >= 2);
+    }
+
+    #[test]
+    fn break_leading_space_ignored() {
+        // A space at the start of a line (current_x = 0) should be skipped
+        let words = vec![
+            make_space(5.0),
+            make_word("hello", 20.0),
+        ];
+        let lines = break_into_lines(&words, 100.0, 5.0);
+        assert_eq!(lines.len(), 1);
+        // The first segment should be "hello", not a space
+        assert!(lines[0].segments[0].text.starts_with("hello"));
+    }
+
+    #[test]
+    fn break_line_total_width_tracked() {
+        let words = vec![
+            make_word("aa", 20.0),
+            make_space(5.0),
+            make_word("bb", 20.0),
+        ];
+        let lines = break_into_lines(&words, 100.0, 5.0);
+        assert_eq!(lines.len(), 1);
+        assert!((lines[0].total_width_mm - 45.0).abs() < 1e-9);
+    }
+}

@@ -288,3 +288,317 @@ fn apply_override(style: &mut PageStyle, page_override: Option<&PageStyleOverrid
         style.margin_boxes.insert(*pos, mb.clone());
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── Helpers ─────────────────────────────────────────────────
+
+    fn target<'a>(tag: &'a str, id: &'a Option<String>, classes: &'a [String]) -> MatchTarget<'a> {
+        MatchTarget { tag, id, classes }
+    }
+
+    fn ancestor(tag: &str, id: Option<&str>, classes: &[&str]) -> AncestorInfo {
+        AncestorInfo {
+            tag: tag.to_string(),
+            id: id.map(String::from),
+            classes: classes.iter().map(|s| s.to_string()).collect(),
+        }
+    }
+
+    // ── SimpleSelector::matches ─────────────────────────────────
+
+    #[test]
+    fn universal_matches_anything() {
+        let sel = SimpleSelector::Universal;
+        let no_id = None;
+        assert!(sel.matches("div", &no_id, &[]));
+        assert!(sel.matches("p", &Some("myid".into()), &["cls".into()]));
+    }
+
+    #[test]
+    fn type_selector_matches_tag() {
+        let sel = SimpleSelector::Type("p".into());
+        assert!(sel.matches("p", &None, &[]));
+        assert!(!sel.matches("div", &None, &[]));
+    }
+
+    #[test]
+    fn class_selector_matches_class() {
+        let sel = SimpleSelector::Class("note".into());
+        assert!(sel.matches("p", &None, &["note".into()]));
+        assert!(sel.matches("div", &None, &["foo".into(), "note".into()]));
+        assert!(!sel.matches("p", &None, &["other".into()]));
+    }
+
+    #[test]
+    fn id_selector_matches_id() {
+        let sel = SimpleSelector::Id("main".into());
+        assert!(sel.matches("div", &Some("main".into()), &[]));
+        assert!(!sel.matches("div", &Some("other".into()), &[]));
+        assert!(!sel.matches("div", &None, &[]));
+    }
+
+    #[test]
+    fn type_and_class_selector() {
+        let sel = SimpleSelector::TypeAndClass("p".into(), "highlight".into());
+        assert!(sel.matches("p", &None, &["highlight".into()]));
+        assert!(!sel.matches("div", &None, &["highlight".into()]));
+        assert!(!sel.matches("p", &None, &["other".into()]));
+    }
+
+    // ── SimpleSelector::specificity ─────────────────────────────
+
+    #[test]
+    fn specificity_universal() {
+        assert_eq!(SimpleSelector::Universal.specificity(), (0, 0, 0));
+    }
+
+    #[test]
+    fn specificity_type() {
+        assert_eq!(SimpleSelector::Type("p".into()).specificity(), (0, 0, 1));
+    }
+
+    #[test]
+    fn specificity_class() {
+        assert_eq!(SimpleSelector::Class("c".into()).specificity(), (0, 1, 0));
+    }
+
+    #[test]
+    fn specificity_id() {
+        assert_eq!(SimpleSelector::Id("i".into()).specificity(), (1, 0, 0));
+    }
+
+    #[test]
+    fn specificity_type_and_class() {
+        assert_eq!(SimpleSelector::TypeAndClass("p".into(), "c".into()).specificity(), (0, 1, 1));
+    }
+
+    // ── Selector (simple) ───────────────────────────────────────
+
+    #[test]
+    fn simple_selector_matches_element() {
+        let sel = Selector::simple(SimpleSelector::Type("h1".into()));
+        let no_id = None;
+        let t = target("h1", &no_id, &[]);
+        assert!(sel.matches(&t, &[]));
+    }
+
+    #[test]
+    fn simple_selector_no_match() {
+        let sel = Selector::simple(SimpleSelector::Type("h1".into()));
+        let no_id = None;
+        let t = target("h2", &no_id, &[]);
+        assert!(!sel.matches(&t, &[]));
+    }
+
+    // ── Selector with descendant combinator ─────────────────────
+
+    #[test]
+    fn descendant_selector_div_p() {
+        // "div p" matches <p> inside <div>
+        let sel = Selector {
+            parts: vec![
+                (Combinator::Descendant, SimpleSelector::Type("div".into())),
+                (Combinator::Descendant, SimpleSelector::Type("p".into())),
+            ],
+        };
+        let no_id = None;
+        let t = target("p", &no_id, &[]);
+        let ancestors = vec![ancestor("div", None, &[])];
+        assert!(sel.matches(&t, &ancestors));
+    }
+
+    #[test]
+    fn descendant_selector_deep_nesting() {
+        // "div p" should match <p> even through intermediary elements
+        let sel = Selector {
+            parts: vec![
+                (Combinator::Descendant, SimpleSelector::Type("div".into())),
+                (Combinator::Descendant, SimpleSelector::Type("p".into())),
+            ],
+        };
+        let no_id = None;
+        let t = target("p", &no_id, &[]);
+        let ancestors = vec![
+            ancestor("section", None, &[]),
+            ancestor("div", None, &[]),
+        ];
+        assert!(sel.matches(&t, &ancestors));
+    }
+
+    #[test]
+    fn descendant_selector_no_match_wrong_ancestor() {
+        let sel = Selector {
+            parts: vec![
+                (Combinator::Descendant, SimpleSelector::Type("div".into())),
+                (Combinator::Descendant, SimpleSelector::Type("p".into())),
+            ],
+        };
+        let no_id = None;
+        let t = target("p", &no_id, &[]);
+        let ancestors = vec![ancestor("section", None, &[])];
+        assert!(!sel.matches(&t, &ancestors));
+    }
+
+    // ── Selector with child combinator ──────────────────────────
+
+    #[test]
+    fn child_selector_direct_parent() {
+        // "div > p" matches <p> directly inside <div>
+        let sel = Selector {
+            parts: vec![
+                (Combinator::Descendant, SimpleSelector::Type("div".into())),
+                (Combinator::Child, SimpleSelector::Type("p".into())),
+            ],
+        };
+        let no_id = None;
+        let t = target("p", &no_id, &[]);
+        let ancestors = vec![ancestor("div", None, &[])];
+        assert!(sel.matches(&t, &ancestors));
+    }
+
+    #[test]
+    fn three_part_child_combinator_requires_direct_parent() {
+        // "body > div > p": the Child combinator on `div` part IS consulted
+        // because `div` is not the subject. So <p> must be directly inside <div>.
+        let sel = Selector {
+            parts: vec![
+                (Combinator::Descendant, SimpleSelector::Type("body".into())),
+                (Combinator::Child, SimpleSelector::Type("div".into())),
+                (Combinator::Child, SimpleSelector::Type("p".into())),
+            ],
+        };
+        let no_id = None;
+
+        // Direct: body > div > p -- should match
+        let t = target("p", &no_id, &[]);
+        let ancestors = vec![
+            ancestor("div", None, &[]),
+            ancestor("body", None, &[]),
+        ];
+        assert!(sel.matches(&t, &ancestors));
+
+        // Intermediary between div and p: body > div > section > p -- should NOT match
+        // because part_idx=1 is (Child, div), so ancestors[0] must be div, but it's section
+        let ancestors_with_gap = vec![
+            ancestor("section", None, &[]),
+            ancestor("div", None, &[]),
+            ancestor("body", None, &[]),
+        ];
+        assert!(!sel.matches(&t, &ancestors_with_gap));
+    }
+
+    // ── Selector with class in ancestor chain ───────────────────
+
+    #[test]
+    fn class_in_ancestor_chain() {
+        // ".container p"
+        let sel = Selector {
+            parts: vec![
+                (Combinator::Descendant, SimpleSelector::Class("container".into())),
+                (Combinator::Descendant, SimpleSelector::Type("p".into())),
+            ],
+        };
+        let no_id = None;
+        let t = target("p", &no_id, &[]);
+        let ancestors = vec![ancestor("div", None, &["container"])];
+        assert!(sel.matches(&t, &ancestors));
+    }
+
+    // ── Selector::specificity compound ──────────────────────────
+
+    #[test]
+    fn compound_specificity_adds_up() {
+        // "div .note" => (0,0,1) + (0,1,0) = (0,1,1)
+        let sel = Selector {
+            parts: vec![
+                (Combinator::Descendant, SimpleSelector::Type("div".into())),
+                (Combinator::Descendant, SimpleSelector::Class("note".into())),
+            ],
+        };
+        assert_eq!(sel.specificity(), (0, 1, 1));
+    }
+
+    // ── Empty selector ──────────────────────────────────────────
+
+    #[test]
+    fn empty_selector_never_matches() {
+        let sel = Selector { parts: vec![] };
+        let no_id = None;
+        let t = target("p", &no_id, &[]);
+        assert!(!sel.matches(&t, &[]));
+    }
+
+    // ── PageStyle ───────────────────────────────────────────────
+
+    #[test]
+    fn page_style_default_a4() {
+        let ps = PageStyle::default();
+        assert!((ps.width_mm - 210.0).abs() < 1e-9);
+        assert!((ps.height_mm - 297.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn page_style_content_dimensions() {
+        let ps = PageStyle::default();
+        let cw = ps.content_width_mm();
+        let ch = ps.content_height_mm();
+        assert!((cw - (210.0 - 20.0 - 20.0)).abs() < 1e-9);
+        assert!((ch - (297.0 - 25.0 - 25.0)).abs() < 1e-9);
+    }
+
+    // ── named_page_size ─────────────────────────────────────────
+
+    #[test]
+    fn named_page_size_a4() {
+        let (w, h) = named_page_size("a4").unwrap();
+        assert!((w - 210.0).abs() < 1e-9);
+        assert!((h - 297.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn named_page_size_letter() {
+        let (w, h) = named_page_size("letter").unwrap();
+        assert!((w - 215.9).abs() < 1e-9);
+        assert!((h - 279.4).abs() < 1e-9);
+    }
+
+    #[test]
+    fn named_page_size_case_insensitive() {
+        assert!(named_page_size("A4").is_some());
+        assert!(named_page_size("LETTER").is_some());
+    }
+
+    #[test]
+    fn named_page_size_unknown() {
+        assert!(named_page_size("tabloid").is_none());
+    }
+
+    // ── PageStyleSet::for_page ──────────────────────────────────
+
+    #[test]
+    fn page_style_set_first_page_override() {
+        let mut pss = PageStyleSet::default();
+        pss.first = Some(PageStyleOverride {
+            margin_boxes: HashMap::new(),
+            suppress_boxes: vec![MarginBoxPosition::TopCenter],
+        });
+        // Insert a top-center box in the base
+        pss.base.margin_boxes.insert(MarginBoxPosition::TopCenter, MarginBox {
+            content: vec![ContentItem::String("Header".into())],
+            font_size_pt: None,
+            color: None,
+            text_align: None,
+        });
+
+        let page1 = pss.for_page(1, 5);
+        // First page should have the box suppressed
+        assert!(!page1.margin_boxes.contains_key(&MarginBoxPosition::TopCenter));
+
+        let page2 = pss.for_page(2, 5);
+        // Non-first pages keep the box
+        assert!(page2.margin_boxes.contains_key(&MarginBoxPosition::TopCenter));
+    }
+}

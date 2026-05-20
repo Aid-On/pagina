@@ -267,3 +267,205 @@ impl FontManager {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::css::values::{FontStyle, FontWeight};
+
+    // ── FontMetrics basic construction ──────────────────────────
+
+    fn sample_metrics() -> FontMetrics {
+        let mut widths = HashMap::new();
+        widths.insert('A', 600);
+        widths.insert('B', 600);
+        widths.insert(' ', 300);
+        FontMetrics {
+            char_widths: widths,
+            units_per_em: 1000,
+            ascender: 800,
+            descender: -200,
+            default_width: 500,
+        }
+    }
+
+    // ── text_width_mm ───────────────────────────────────────────
+
+    #[test]
+    fn text_width_single_char() {
+        let m = sample_metrics();
+        // 'A' width = 600, scale = 12.0 / 1000 * 25.4 / 72.0
+        let w = m.text_width_mm("A", 12.0);
+        let expected = 600.0 * 12.0 / 1000.0 * 25.4 / 72.0;
+        assert!((w - expected).abs() < 1e-9);
+    }
+
+    #[test]
+    fn text_width_multiple_chars() {
+        let m = sample_metrics();
+        let w = m.text_width_mm("AB", 12.0);
+        let expected = (600.0 + 600.0) * 12.0 / 1000.0 * 25.4 / 72.0;
+        assert!((w - expected).abs() < 1e-9);
+    }
+
+    #[test]
+    fn text_width_unknown_char_uses_default() {
+        let m = sample_metrics();
+        // 'Z' is not in char_widths, should use default_width=500
+        let w = m.text_width_mm("Z", 12.0);
+        let expected = 500.0 * 12.0 / 1000.0 * 25.4 / 72.0;
+        assert!((w - expected).abs() < 1e-9);
+    }
+
+    #[test]
+    fn text_width_empty_string_is_zero() {
+        let m = sample_metrics();
+        assert_eq!(m.text_width_mm("", 12.0), 0.0);
+    }
+
+    #[test]
+    fn text_width_scales_with_font_size() {
+        let m = sample_metrics();
+        let w12 = m.text_width_mm("A", 12.0);
+        let w24 = m.text_width_mm("A", 24.0);
+        assert!((w24 - w12 * 2.0).abs() < 1e-9);
+    }
+
+    // ── space_width_mm ──────────────────────────────────────────
+
+    #[test]
+    fn space_width_uses_space_char() {
+        let m = sample_metrics();
+        let w = m.space_width_mm(12.0);
+        let expected = 300.0 * 12.0 / 1000.0 * 25.4 / 72.0;
+        assert!((w - expected).abs() < 1e-9);
+    }
+
+    #[test]
+    fn space_width_no_space_char_uses_default() {
+        let m = FontMetrics {
+            char_widths: HashMap::new(),
+            units_per_em: 1000,
+            ascender: 800,
+            descender: -200,
+            default_width: 400,
+        };
+        let w = m.space_width_mm(10.0);
+        let expected = 400.0 * 10.0 / 1000.0 * 25.4 / 72.0;
+        assert!((w - expected).abs() < 1e-9);
+    }
+
+    // ── line_height_mm ──────────────────────────────────────────
+
+    #[test]
+    fn line_height_calculation() {
+        let m = sample_metrics();
+        let lh = m.line_height_mm(12.0, 1.5);
+        let expected = 12.0 * 1.5 * 25.4 / 72.0;
+        assert!((lh - expected).abs() < 1e-9);
+    }
+
+    #[test]
+    fn line_height_ratio_one() {
+        let m = sample_metrics();
+        let lh = m.line_height_mm(10.0, 1.0);
+        let expected = 10.0 * 25.4 / 72.0;
+        assert!((lh - expected).abs() < 1e-9);
+    }
+
+    // ── resolve_builtin ─────────────────────────────────────────
+
+    #[test]
+    fn resolve_builtin_helvetica_normal() {
+        let bf = resolve_builtin(FontWeight::Normal, FontStyle::Normal, "Helvetica");
+        assert_eq!(bf, BuiltinFont::Helvetica);
+    }
+
+    #[test]
+    fn resolve_builtin_helvetica_bold() {
+        let bf = resolve_builtin(FontWeight::Bold, FontStyle::Normal, "Helvetica");
+        assert_eq!(bf, BuiltinFont::HelveticaBold);
+    }
+
+    #[test]
+    fn resolve_builtin_helvetica_italic() {
+        let bf = resolve_builtin(FontWeight::Normal, FontStyle::Italic, "Helvetica");
+        assert_eq!(bf, BuiltinFont::HelveticaOblique);
+    }
+
+    #[test]
+    fn resolve_builtin_helvetica_bold_italic() {
+        let bf = resolve_builtin(FontWeight::Bold, FontStyle::Italic, "Helvetica");
+        assert_eq!(bf, BuiltinFont::HelveticaBoldOblique);
+    }
+
+    #[test]
+    fn resolve_builtin_courier_normal() {
+        let bf = resolve_builtin(FontWeight::Normal, FontStyle::Normal, "Courier");
+        assert_eq!(bf, BuiltinFont::Courier);
+    }
+
+    #[test]
+    fn resolve_builtin_courier_bold() {
+        let bf = resolve_builtin(FontWeight::Bold, FontStyle::Normal, "Courier");
+        assert_eq!(bf, BuiltinFont::CourierBold);
+    }
+
+    #[test]
+    fn resolve_builtin_monospace_maps_to_courier() {
+        let bf = resolve_builtin(FontWeight::Normal, FontStyle::Normal, "monospace");
+        assert_eq!(bf, BuiltinFont::Courier);
+    }
+
+    #[test]
+    fn resolve_builtin_unknown_family_defaults_to_helvetica() {
+        let bf = resolve_builtin(FontWeight::Normal, FontStyle::Normal, "UnknownFont");
+        assert_eq!(bf, BuiltinFont::Helvetica);
+    }
+
+    // ── FontManager ─────────────────────────────────────────────
+
+    #[test]
+    fn font_manager_new_has_builtin_metrics() {
+        let fm = FontManager::new();
+        let resolved = fm.resolve("Helvetica", FontWeight::Normal, FontStyle::Normal);
+        // Should not panic
+        let _metrics = fm.metrics(&resolved);
+    }
+
+    #[test]
+    fn font_manager_resolve_unknown_falls_back_to_builtin() {
+        let fm = FontManager::new();
+        let resolved = fm.resolve("NonExistentFont", FontWeight::Normal, FontStyle::Normal);
+        assert!(matches!(resolved, ResolvedFont::Builtin(_)));
+    }
+
+    #[test]
+    fn font_manager_resolve_default_no_externals() {
+        let fm = FontManager::new();
+        let resolved = fm.resolve_default(FontWeight::Normal, FontStyle::Normal);
+        assert!(matches!(resolved, ResolvedFont::Builtin(BuiltinFont::Helvetica)));
+    }
+
+    #[test]
+    fn font_manager_measure_text_positive() {
+        let fm = FontManager::new();
+        let w = fm.measure_text("Hello", "Helvetica", FontWeight::Normal, FontStyle::Normal, 12.0);
+        assert!(w > 0.0);
+    }
+
+    #[test]
+    fn font_manager_measure_empty_text_is_zero() {
+        let fm = FontManager::new();
+        let w = fm.measure_text("", "Helvetica", FontWeight::Normal, FontStyle::Normal, 12.0);
+        assert_eq!(w, 0.0);
+    }
+
+    #[test]
+    fn font_manager_pdf_handle_builtin() {
+        let fm = FontManager::new();
+        let resolved = fm.resolve("Helvetica", FontWeight::Normal, FontStyle::Normal);
+        let handle = fm.pdf_handle(&resolved);
+        assert!(matches!(handle, PdfFontHandle::Builtin(BuiltinFont::Helvetica)));
+    }
+}
